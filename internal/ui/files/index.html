@@ -5,22 +5,85 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Hello, World!</title>
     <link rel="stylesheet" href="style.css" />
+    <script>
+        var GlobalDirectory = {};
+    </script>
     <script type="module">
         import {newKey, sign} from './jws.js';
 
         document.addEventListener('DOMContentLoaded', async () => {
-            const key = await newKey();
-            console.log("key", key);
+            document.querySelector('button#fetchDirectory').addEventListener('click', async (e) => {
+                // get the directory url from the input with id directoryURL
+                const directoryURL = document.querySelector('input#directory').value;
+                console.log(`Fetching directory '${directoryURL}'`);
+                try {
+                    const resp = await fetch(directoryURL);
+                    document.querySelector('input#nonce').value = resp.headers.get('replay-nonce');
+                    GlobalDirectory = await resp.json()
+                    console.log("directory", GlobalDirectory);
+                    document.querySelector('input#newNonce').value = GlobalDirectory["newNonce"];
+                    for (const [key, value] of Object.entries(GlobalDirectory)) {
+                        const option = document.createElement('option');
+                        option.value = key;
+                        option.text = key;
+                        document.querySelector('select#endpoint').appendChild(option);
+                    }
+                } catch (e) {
+                    console.log(`Error fetching directory ${directoryURL}`, e);
+                }
+            })
 
-            const msg = {"termsOfServiceAgreed": true};
-            console.log("msg", msg);
+            document.querySelector('button#getNonce').addEventListener('click', async (e) => {
+                let newNonce = document.querySelector('input#newNonce').value;
+                console.log("Getting new nonce");
+                try {
+                    const resp = await fetch(newNonce);
+                    document.querySelector('input#nonce').value = resp.headers.get('replay-nonce');
+                } catch (e) {
+                    console.log('Error getting new nonce', e);
+                }
+            })
 
-            const nonce = "vSBaDe_3DuMNdQxvMqP2TQ";
-            const newAcct = "https://localhost:14000/sign-me-up";
-            const res = await sign(key, null, msg, nonce, newAcct);
+            document.querySelector('button#use').addEventListener('click', async (e) => {
+                const endpoint = document.querySelector('select#endpoint').value;
+                console.log("Using endpoint", endpoint);
+                document.querySelector('input#url').value = GlobalDirectory[endpoint];
+            })
 
-            console.log("Signed");
-            console.log(res);
+            document.querySelector('button#sign').addEventListener('click', async (e) => {
+                // TODO: persist keys
+                const key = await newKey();
+                console.log("key", key);
+
+                const msg = JSON.parse(document.querySelector('textarea#msg').value);
+                document.querySelector('textarea#msg').value = JSON.stringify(msg, null, 2);
+                const nonce = document.querySelector('input#nonce').value;
+                const url = document.querySelector('input#url').value;
+
+                const res = await sign(key, null, msg, nonce, url);
+
+                console.log("Signed");
+                console.log(res);
+                document.querySelector('textarea#signed').value = res;
+            })
+
+            document.querySelector('button#submit').addEventListener('click', async (e) => {
+                const signed = document.querySelector('textarea#signed').value;
+                const url = document.querySelector('input#url').value;
+                console.log("Submitting", signed, url);
+                try {
+                    const resp = await fetch(url, {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/jose+json'},
+                        body: signed,
+                    });
+                    document.querySelector('input#nonce').value = resp.headers.get('replay-nonce');
+                    // TODO: Some other requests have headers
+                    document.querySelector('textarea#output').value = await resp.text();
+                } catch (e) {
+                    console.log("Error submitting", e);
+                }
+            })
         })
 
     </script>
@@ -28,5 +91,21 @@
 <body>
     <h1>Hello, World!</h1>
     <p>This will be something.</p>
+
+    <form>
+        <div><label for="directory">Directory:</label><input id="directory" /><button type="button" id="fetchDirectory">Fetch Directory</button></div>
+        <div><label for="endpoint">Endpoint: </label><select id="endpoint"></select><button type="button" id="use">Use Endpoint</button></div>
+        <div><label for="url">URL: </label><input id="url" /></div>
+        <div><button type="button" id="getNonce">Get Nonce from: </button><input id="newNonce" /></div>
+        <div><label for="nonce">Nonce: </label><input id="nonce" /></div>
+        <div><label for="msg">Message: </label></div>
+        <div><textarea id="msg"></textarea></div>
+        <div><button type="button" id="sign">Sign</button></div>
+        <div><label for="signed">Signed: </label></div>
+        <div><textarea id="signed"></textarea></div>
+        <div><button type="button" id="submit">Submit</button></div>
+        <div><label for="output">Output:</label></div>
+        <div><textarea id="output"></textarea></div>
+    </form>
 </body>
 </html>
