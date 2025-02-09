@@ -1,7 +1,30 @@
 <!doctype html>
 <html lang="en">
 <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Hello, World!</title>
+    <link rel="stylesheet" href="style.css" />
+    <script type="module">
+        import {newKey, sign} from './jws.js';
+
+        document.addEventListener('DOMContentLoaded', async () => {
+            const key = await newKey();
+            console.log("key", key);
+
+            const msg = {"termsOfServiceAgreed": true};
+            console.log("msg", msg);
+
+            const nonce = "P2KnvaIEJ0GyP_GW3D5xoA"
+            const newAcct = "https://localhost:14000/sign-me-up";
+            const res = await sign(key, null, msg, nonce, newAcct);
+
+            console.log("Signed");
+            console.log(res);
+            console.log(JSON.stringify(res));
+        })
+
+    </script>
 </head>
 <body>
     <h1>Hello, World!</h1>
