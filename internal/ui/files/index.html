@@ -15,13 +15,12 @@
             const msg = {"termsOfServiceAgreed": true};
             console.log("msg", msg);
 
-            const nonce = "P2KnvaIEJ0GyP_GW3D5xoA"
+            const nonce = "vSBaDe_3DuMNdQxvMqP2TQ";
             const newAcct = "https://localhost:14000/sign-me-up";
             const res = await sign(key, null, msg, nonce, newAcct);
 
             console.log("Signed");
             console.log(res);
-            console.log(JSON.stringify(res));
         })
 
     </script>

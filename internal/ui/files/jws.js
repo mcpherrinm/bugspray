@@ -5,6 +5,17 @@ function b64(string) {
         .replace(/=+$/, '');
 }
 
+function b64array(array) {
+    let asString = '';
+    const bytes = new Uint8Array(array);
+    const len = bytes.byteLength;
+    for (let i = 0; i < len; i++) {
+        asString += String.fromCharCode(bytes[i]);
+    }
+
+    return b64(asString);
+}
+
 async function newKey() {
     return await window.crypto.subtle.generateKey(
         {
@@ -44,19 +55,17 @@ async function sign(key, kid, payload, nonce, url) {
     const encodedProtected = b64(JSON.stringify(prot));
     const encodedPayload = b64(JSON.stringify(payload));
 
-    const signatureInput = encodedProtected + "." + encodedPayload;
-
-    const sig = b64(await window.crypto.subtle.sign(
+    const sig = await window.crypto.subtle.sign(
         {name: "ECDSA", hash: {name: "SHA-256"}},
         key.privateKey,
-        new TextEncoder().encode(signatureInput)
-    ))
+        new TextEncoder().encode(encodedProtected + "." + encodedPayload)
+    )
 
-    return {
+    return JSON.stringify({
         "protected": encodedProtected,
         "payload": encodedPayload,
-        "signature": sig,
-    }
+        "signature": b64array(sig),
+    }, null, 2);
 }
 
 export {newKey, sign};
