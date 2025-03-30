@@ -72,6 +72,8 @@ async function newKey(name) {
     return newKey
 }
 
+// Create the protected part of a JWS
+// If kid is null, a jwk field will be added, which should happen for newAccount and certificate-key revokeCert
 async function protect(key, kid, nonce, url) {
     let prot= {
         nonce: nonce,
@@ -95,9 +97,8 @@ async function protect(key, kid, nonce, url) {
 }
 
 // Compute a signature for ACME
-// If kid is null, a jwk field will be added. This should happen for newAccount and certificate-key revokeCert
-// Payload should be an object that will be JSON-encoded.
-// Nonce and URL strings per ACME.
+// prot should come from `protect`.
+// Payload should be an object that will be JSON-encoded, or an empty string for an empty payload (POST-as-GET)
 async function sign(key, prot, payload) {
     const encodedProtected = b64(JSON.stringify(prot));
     let encodedPayload;
