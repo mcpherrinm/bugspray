@@ -17,6 +17,7 @@ function clearStorage() {
 
 function setObject(url, name, type, parent, resource) {
     Storage.set(url, {
+        url: url,
         type: type,
         name: name || '',
         parent: parent,

@@ -1,5 +1,5 @@
 import {clearStorage, getObject, listObjects, setObject} from "./storage.js";
-import {protect, newKey} from "./jws.js";
+import {newKey, protect, sign} from "./jws.js";
 
 function setup() {
     renderTreeview();
@@ -49,35 +49,34 @@ function element(tag, innerText) {
     return e;
 }
 
+function label(id, text) {
+    let e = document.createElement('label');
+    e.htmlFor = id;
+    e.innerText = text;
+    return e;
+}
+
 function input(form, id, labelText, placeholder) {
-    let label = document.createElement('label');
-    label.htmlFor = id;
-    label.innerText = labelText;
     let inputElement = document.createElement('input');
     inputElement.id = id;
     inputElement.name = id;
     inputElement.placeholder = placeholder;
 
-    let r = div(label, inputElement);
+    let r = div(label(id, labelText), inputElement);
     r.className = "inputWrapper";
 
-    console.log('form', form);
-    console.log(r);
     form.appendChild(r)
 
     return inputElement
 }
 
 function checkbox(form, id, labelText, nextToCheckbox) {
-    let label = document.createElement('label');
-    label.htmlFor = id;
-    label.innerText = labelText;
     let checkboxElement = document.createElement('input');
     checkboxElement.id = id;
     checkboxElement.name = id;
     checkboxElement.type = 'checkbox';
 
-    let r = div(label, div(checkboxElement, nextToCheckbox));
+    let r = div(label(id, labelText), div(checkboxElement, nextToCheckbox));
     r.className = "checkboxWrapper";
 
     form.appendChild(r)
@@ -224,12 +223,20 @@ function renderObject(url, object) {
     document.getElementById('poker').replaceChildren(h1, div(resourceURL), resource, div(rawH2, raw));
 }
 
+let noncePool = [];
+
 function gotNonce(headers) {
     const nonce = headers.get('replay-nonce');
     if (nonce !== null) {
-        // TODO: we may want to pool nonces somewhere
-        document.querySelector('input#nonce').value = nonce;
+        noncePool.push(nonce);
     }
+}
+
+function getNonce() {
+    if (noncePool.length === 0) {
+        return 'no-nonces-run-new-nonce';
+    }
+    return noncePool.pop()
 }
 
 function goButton(id, label, onClick) {
@@ -310,6 +317,8 @@ function newAccount(f, directory) {
             },
             key: keyName.value,
             useKID: false,
+            type: 'account',
+            parent: directory,
         }
         if (contact.value !== '') {
             data.msg.contact = [contact.value];
@@ -385,7 +394,7 @@ function runMethod(method, directory) {
     let f = document.createElement('form');
 
     let type = null;
-    let getData = null;
+    let getData = () => {return {}};
 
     switch (method) {
         case 'newNonce':
@@ -429,6 +438,7 @@ function runMethod(method, directory) {
         await poster({
             name: nameInput.value,
             url: directory.resource[method],
+            nonce: getNonce(),
             type: type,
             ...getData(),
         })
@@ -442,22 +452,59 @@ async function poster(data) {
 
     let f = document.createElement('form');
 
-    // Key input, use KID
-
-    // Endpoint URL
-
-    input(f, 'nonce', 'Nonce', 'nonce');
-
     let msg = element('textarea', '');
     msg.value = JSON.stringify(data.msg, null, 2);
     f.appendChild(msg);
 
     let prot = element('textarea', '');
-    // TODO: this depends on nonce, which is in this form above and probably isnt filled out yet
-    prot.value = JSON.stringify(await protect(await newKey(data.key), data.useKID ? data.key : undefined, 'TODO:NONCE', data.url), null, 2);
-    f.appendChild(prot);
+    prot.id = 'protected';
+    let key = await newKey(data.key);
+    let protectedData = await protect(key, data.useKID ? data.key : undefined, data.nonce, data.url);
+    prot.value = JSON.stringify(protectedData, null, 2);
+    f.appendChild(div(label('protected', 'Protected Data'), prot));
 
-    document.getElementById('poker').replaceChildren(h1, f);
+    // TODO: we want to re-sign if the data is changed. Automatically, or maybe manually
+    let signedData = await sign(key, protectedData, data.msg);
+
+    let signed = element('textarea', '');
+    signed.value = signedData;
+    signed.id = 'signed';
+
+    f.appendChild(div(label('signed', 'Signed Data'), signed));
+
+    const go = goButton('submit', 'Submit Request', async () => {
+        await submit(data.url, signedData, data.name, data.type, data.parent);
+    })
+
+    document.getElementById('poker').replaceChildren(h1, f, go);
+}
+
+async function submit(url, signed, objName, objType, objParent) {
+    const pending = element('h1', 'Submitting...')
+    document.getElementById('poker').replaceChildren(pending);
+
+    const resp = await fetch(url, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/jose+json'},
+        body: signed,
+    })
+    gotNonce(resp.headers)
+
+    let h1 = element('h1', 'Result');
+
+    const locationHeader = resp.headers.get('Location');
+    const location = element('p', locationHeader || 'unknown location');
+
+    const resourceJSON = await resp.json();
+    let resource = element('textarea', '');
+    resource.value = JSON.stringify(resourceJSON, null, 2);
+    resource.id = 'result';
+
+    if (locationHeader) {
+        setObject(locationHeader, objName, objType, objParent, resourceJSON);
+        renderTreeview()
+    }
+    document.getElementById('poker').replaceChildren(h1, location, resource);
 }
 
 
