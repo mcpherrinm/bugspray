@@ -429,14 +429,8 @@ function runMethod(method, directory) {
             return;
     }
 
-    let nameInput = null;
-    if (type !== null) {
-        nameInput = input(f, 'name', `Save ${name} as name`, `Name for this ${type}`);
-    }
-
     const go = goButton('go-run-method', `Run ${method}`, async () => {
         await poster({
-            name: nameInput.value,
             url: directory.resource[method],
             nonce: getNonce(),
             type: type,
@@ -473,13 +467,14 @@ async function poster(data) {
     f.appendChild(div(label('signed', 'Signed Data'), signed));
 
     const go = goButton('submit', 'Submit Request', async () => {
-        await submit(data.url, signedData, data.name, data.type, data.parent);
+        let nameValue = document.getElementById('name').value;
+        await submit(data.url, signedData, nameValue, data.type, data.parent);
     })
 
     document.getElementById('poker').replaceChildren(h1, f, go);
 }
 
-async function submit(url, signed, objName, objType, objParent) {
+async function submit(url, signed, objType, objParent) {
     const pending = element('h1', 'Submitting...')
     document.getElementById('poker').replaceChildren(pending);
 
@@ -490,21 +485,29 @@ async function submit(url, signed, objName, objType, objParent) {
     })
     gotNonce(resp.headers)
 
-    let h1 = element('h1', 'Result');
-
     const locationHeader = resp.headers.get('Location');
-    const location = element('p', locationHeader || 'unknown location');
 
     const resourceJSON = await resp.json();
+
+    if (locationHeader) {
+        setObject(locationHeader, '', objType, objParent, resourceJSON);
+        renderTreeview()
+    }
+
+    // TODO: this result view should include a bit more about the HTTP request/response
+
+    let h1 = element('h1', 'Result');
+
+    const location = element('p', locationHeader || 'unknown location');
     let resource = element('textarea', '');
     resource.value = JSON.stringify(resourceJSON, null, 2);
     resource.id = 'result';
 
-    if (locationHeader) {
-        setObject(locationHeader, objName, objType, objParent, resourceJSON);
-        renderTreeview()
-    }
-    document.getElementById('poker').replaceChildren(h1, location, resource);
+    const view = goButton('view', 'Go to object', () => {
+        viewObject(locationHeader);
+    })
+
+    document.getElementById('poker').replaceChildren(h1, location, resource, view);
 }
 
 
