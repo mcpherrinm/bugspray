@@ -131,7 +131,50 @@ function renderDirectory(url, directory) {
 }
 
 function renderAccount(url, object) {
-    return "TODO: account";
+    let accountDiv = div();
+
+    const expectedFields = ['status', 'contact', 'termsOfServiceAgreed', 'orders'];
+    for (const field of expectedFields) {
+        if (object.resource[field] !== undefined) {
+            let value = object.resource[field];
+            if (field === 'contact' && Array.isArray(value)) {
+                value = value.join(', ');
+            }
+            accountDiv.appendChild(element('p', `${field}: ${value}`));
+        }
+    }
+
+    let unknownDiv = div(element('h2', 'Unknown Account Entries'));
+    let unknown = false;
+    for (const [key, value] of Object.entries(object.resource)) {
+        if (expectedFields.includes(key)) {
+            continue;
+        }
+        unknownDiv.appendChild(element('p', `${key}: ${JSON.stringify(value)}`));
+        unknown = true;
+    }
+    if (unknown) {
+        accountDiv.appendChild(unknownDiv);
+    }
+
+    const directoryUrl = getDirectoryUrl(url);
+    const directory = getObject(directoryUrl);
+    if (directory) {
+        let methodsHeader = element('h2', 'Methods');
+        let methodsDiv = div(methodsHeader);
+        const rows = [['newNonce', 'newOrder', 'newAuthz'], ['revokeCert', 'keyChange']];
+        for (const row of rows) {
+            const rowDiv = div();
+            rowDiv.className = 'row';
+            for (const method of row) {
+                rowDiv.appendChild(renderMethod(method, directory));
+            }
+            methodsDiv.appendChild(rowDiv);
+        }
+        accountDiv.appendChild(methodsDiv);
+    }
+
+    return accountDiv;
 }
 
 function renderOrder(url, object) {
