@@ -47,11 +47,11 @@ function label(id, text) {
     return e;
 }
 
-function input(form, id, labelText, placeholder) {
+function input(form, id, labelText, value) {
     let inputElement = document.createElement('input');
     inputElement.id = id;
     inputElement.name = id;
-    inputElement.placeholder = placeholder;
+    inputElement.value = value;
 
     let r = div(label(id, labelText), inputElement);
     r.className = "inputWrapper";
@@ -79,11 +79,11 @@ function viewObject(url) {
     renderObject(url, getObject(url));
 }
 
-function renderMethod(name, directory) {
+function renderMethod(name, directory, signer) {
     let button = element('button', name);
     button.className = 'method';
     if (directory.resource[name] !== undefined) {
-        button.onclick = () => runMethod(name, directory);
+        button.onclick = () => runMethod(name, directory, signer);
     } else {
         button.disabled = true;
     }
@@ -167,7 +167,7 @@ function renderAccount(url, object) {
             const rowDiv = div();
             rowDiv.className = 'row';
             for (const method of row) {
-                rowDiv.appendChild(renderMethod(method, directory));
+                rowDiv.appendChild(renderMethod(method, directory, {kid: url, key: object.key}));
             }
             methodsDiv.appendChild(rowDiv);
         }
@@ -352,7 +352,6 @@ function newNonce(form, directory) {
 
 // New Account. RFC 8555 Section 7.3
 function newAccount(f, directory) {
-    const keyName = input(f, 'keyName', 'Name of Key', 'key1');
     const contact = input(f, 'contact', 'Contact (optional)', 'mailto:contact@example.com');
     // TODO: allow multiple contacts
 
@@ -372,10 +371,7 @@ function newAccount(f, directory) {
             msg: {
                 termsOfServiceAgreed: tosAgreed.checked,
             },
-            key: keyName.value,
-            useKID: false,
-            type: 'account',
-            parent: directory.url,
+            kid: null,
         }
         if (contact.value !== '') {
             data.msg.contact = [contact.value];
@@ -387,35 +383,28 @@ function newAccount(f, directory) {
     }
 }
 
-function newOrder(f, url) {
-    const keyName = input(f, 'keyName', 'Name of Key', 'key1');
+function newOrder(f, directory) {
     f.appendChild(element('p', "TODO: Implement me."));
 
     return () => {
         return {
             msg: {},
-            key: keyName.value,
-            useKID: false,
         }
     }
 }
 
 
-function newAuthz(f, url) {
-    const keyName = input(f, 'keyName', 'Name of Key', 'key1');
+function newAuthz(f, directory) {
     f.appendChild(element('p', "Where did you even find a server that supports this?"));
 
     return () => {
         return {
             msg: {},
-            key: keyName.value,
-            useKID: false,
         }
     }
 }
 
-function revokeCert(f, url) {
-    const keyName = input(f, 'keyName', 'Name of Key', 'key1');
+function revokeCert(f, directory, kidInput) {
     f.appendChild(element('p', "TODO: Implement me."));
 
     const useKID = checkbox(f, 'useKID', 'Use KID', 'we need to allow providing a key for revoking with a key');
@@ -423,20 +412,16 @@ function revokeCert(f, url) {
     return () => {
         return {
             msg: {},
-            key: keyName.value,
-            useKID: useKID.checked,
+            kid: useKID.checked ? kidInput.value : null,
         }
     }
 }
 
-function keyChange(f, url) {
-    const keyName = input(f, 'keyName', 'Name of Key', 'key1');
+function keyChange(f, directory) {
     f.appendChild(element('p', "TODO: Implement me."));
     return () => {
         return {
             msg: {},
-            key: keyName.value,
-            useKID: true,
         }
     }
 }
@@ -445,10 +430,13 @@ function renewalInfo(f, url) {
     f.appendChild(element('p', "TODO: Implement me."));
 }
 
-function runMethod(method, directory) {
+function runMethod(method, directory, signer) {
     const h1 = element('h1', `Run ${method}`);
 
     let f = document.createElement('form');
+
+    let keyInput = input(f, 'keyName', 'Name of Key', (signer && signer.key) || 'key1');
+    let kidInput = input(f, 'kid', 'Account URI', (signer && signer.kid) || '');
 
     let type = null;
     let parent = directory.url;
@@ -473,7 +461,7 @@ function runMethod(method, directory) {
             type = 'authorization';
             break;
         case 'revokeCert':
-            getData = revokeCert(f, directory);
+            getData = revokeCert(f, directory, kidInput);
             break;
         case 'keyChange':
             getData = keyChange(f, directory);
@@ -493,6 +481,8 @@ function runMethod(method, directory) {
             nonce: getNonce(directory.url),
             type: type,
             parent: parent,
+            key: keyInput?.value,
+            kid: kidInput?.value,
             ...getData(),
         })
     })
@@ -512,7 +502,7 @@ async function poster(data) {
     let prot = element('textarea', '');
     prot.id = 'protected';
     let key = await newKey(data.key);
-    let protectedData = await protect(key, data.useKID ? data.key : undefined, data.nonce, data.url);
+    let protectedData = await protect(key, data.kid, data.nonce, data.url);
     prot.value = JSON.stringify(protectedData, null, 2);
     f.appendChild(div(label('protected', 'Protected Data'), prot));
 
@@ -526,13 +516,13 @@ async function poster(data) {
     f.appendChild(div(label('signed', 'Signed Data'), signed));
 
     const go = goButton('submit', 'Submit Request', async () => {
-        await submit(data.url, signedData, data.type, data.parent);
+        await submit(data.url, signedData, data.type, data.parent, data.key);
     })
 
     document.getElementById('poker').replaceChildren(h1, f, go);
 }
 
-async function submit(url, signed, objType, objParent) {
+async function submit(url, signed, objType, objParent, keyName) {
     const pending = element('h1', 'Submitting...')
     document.getElementById('poker').replaceChildren(pending);
 
@@ -548,7 +538,7 @@ async function submit(url, signed, objType, objParent) {
     const resourceJSON = await resp.json();
 
     if (locationHeader) {
-        setObject(locationHeader, '', objType, objParent, resourceJSON);
+        setObject(locationHeader, '', objType, objParent, resourceJSON, keyName);
         renderTreeview()
     }
 

@@ -15,13 +15,14 @@ function clearStorage() {
     window.localStorage.setItem("bugspray", JSON.stringify({}))
 }
 
-function setObject(url, name, type, parent, resource) {
+function setObject(url, name, type, parent, resource, key) {
     Storage.set(url, {
         url: url,
         type: type,
         name: name || '',
         parent: parent,
-        resource: resource
+        resource: resource,
+        key: key
     })
 
     // Just store the whole thing each time.

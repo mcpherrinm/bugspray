@@ -81,7 +81,7 @@ async function protect(key, kid, nonce, url) {
         alg: "ES256",
     }
 
-    if (kid === undefined) {
+    if (kid === null) {
         const jwk = await window.crypto.subtle.exportKey("jwk", key.publicKey);
         prot["jwk"] = {
             kty: jwk.kty,
