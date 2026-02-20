@@ -61,6 +61,26 @@ function input(form, id, labelText, value) {
     return inputElement
 }
 
+function select(form, id, labelText, options) {
+    let selectElement = document.createElement('select');
+    selectElement.id = id;
+    selectElement.name = id;
+
+    for (const [val, text] of Object.entries(options)) {
+        let opt = document.createElement('option');
+        opt.value = val;
+        opt.text = text;
+        selectElement.appendChild(opt);
+    }
+
+    let r = div(label(id, labelText), selectElement);
+    r.className = "inputWrapper";
+
+    form.appendChild(r)
+
+    return selectElement
+}
+
 function multi(form, id, name, createRow) {
     let multiList = document.createElement("ul");
     multiList.id = id;
@@ -429,11 +449,72 @@ function newAccount(f, directory) {
 }
 
 function newOrder(f, directory) {
-    f.appendChild(element('p', "TODO: Implement me."));
+    let profiles = directory.resource?.meta?.profiles;
+    let profileSelect = null;
+    if (profiles) {
+        let options = {'': 'Default (None)'};
+        for (const p of Object.keys(profiles)) {
+            options[p] = p;
+        }
+        profileSelect = select(f, 'profile', 'Profile (optional)', options);
+    }
+
+    const identifiers = multi(f, 'identifiers', 'Identifiers', () => {
+        const type = document.createElement('select');
+        const dns = document.createElement('option');
+        dns.text = 'dns';
+        dns.value = 'dns';
+        type.add(dns);
+        const ip = document.createElement('option');
+        ip.text = 'ip';
+        ip.value = 'ip';
+        type.add(ip);
+
+        const val = document.createElement('input');
+        val.type = 'text';
+        val.placeholder = 'example.com';
+
+        const elt = div(type, val);
+        elt.style.display = 'flex';
+        elt.style.flex = '1';
+        elt.style.gap = '0.5rem';
+        elt.style.alignItems = 'center';
+
+        return {
+            elt,
+            getValue: () => {
+                return {
+                    type: type.value,
+                    value: val.value
+                }
+            }
+        }
+    });
+
+    const notBefore = input(f, 'notBefore', 'Not Before (optional)', '');
+    notBefore.type = 'datetime-local';
+    const notAfter = input(f, 'notAfter', 'Not After (optional)', '');
+    notAfter.type = 'datetime-local';
 
     return () => {
+        const msg = {
+            identifiers: identifiers.values(),
+        };
+
+        if (profileSelect && profileSelect.value) {
+            msg.profile = profileSelect.value;
+        }
+
+        if (notBefore.value) {
+            msg.notBefore = new Date(notBefore.value).toISOString();
+        }
+
+        if (notAfter.value) {
+            msg.notAfter = new Date(notAfter.value).toISOString();
+        }
+
         return {
-            msg: {},
+            msg: msg,
         }
     }
 }
@@ -480,11 +561,12 @@ function runMethod(method, directory, signer) {
 
     let f = document.createElement('form');
 
-    let keyInput = input(f, 'keyName', 'Name of Key', (signer && signer.key) || 'key1');
-    let kidInput = input(f, 'kid', 'Account URI', (signer && signer.kid) || '');
+    let keyInput = input(f, 'keyName', 'Signing key', (signer && signer.key) || 'key1');
+    let kidInput = input(f, 'kid', 'Key ID (Account URI)', (signer && signer.kid) || '');
 
     let type = null;
-    let parent = directory.url;
+    // TODO: proper parent handling
+    let parent = method === 'newAccount' ? directory.url : kidInput;
     let getData = () => {return {}};
 
     switch (method) {

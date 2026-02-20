@@ -140,7 +140,7 @@ body {
     padding-bottom: 1rem;
 }
 
-.inputWrapper input {
+.inputWrapper input, .inputWrapper select {
     width: 100%;
 }
 
@@ -198,7 +198,7 @@ h1 {
     margin-bottom: 0.5rem;
 }
 
-.multi-row input {
+.multi-row input, .multi-row select {
     flex: 1;
     width: auto;
 }
