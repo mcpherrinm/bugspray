@@ -1,17 +1,11 @@
 # ACME bugspray
-Interactive ACME client, intended for testing
 
-## Architecture
+This is an ACME client in client-side Javascript, intended to be used as part
+of learning the ACME protocol, and testing ACME servers.
 
-There are two parts to this:
+It is currently unfinished.
 
-The backend is a small Go application which proxies ACME requests, as well as
-serving the Web UI. It can serve HTTP-01 challenges on behalf of the frontend.
-An example configuration proxying to a local copy of Pebble is provided.
-
-The frontend is a Javascript ACME client, intended for interactive use. It can
-be used standalone to talk directly to an ACME server, or can have its requests
-proxied through the backend.
+Also I don't know Javascript, so it's probably bad.
 
 ## Security
 
