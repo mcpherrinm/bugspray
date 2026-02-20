@@ -467,8 +467,7 @@ async function poster(data) {
     f.appendChild(div(label('signed', 'Signed Data'), signed));
 
     const go = goButton('submit', 'Submit Request', async () => {
-        let nameValue = document.getElementById('name').value;
-        await submit(data.url, signedData, nameValue, data.type, data.parent);
+        await submit(data.url, signedData, data.type, data.parent);
     })
 
     document.getElementById('poker').replaceChildren(h1, f, go);
