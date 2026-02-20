@@ -566,7 +566,7 @@ function runMethod(method, directory, signer) {
 
     let type = null;
     // TODO: proper parent handling
-    let parent = method === 'newAccount' ? directory.url : kidInput;
+    let parent = method === 'newAccount' ? directory.url : kidInput?.value;
     let getData = () => {return {}};
 
     switch (method) {
