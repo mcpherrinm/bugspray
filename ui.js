@@ -75,6 +75,56 @@ function checkbox(form, id, labelText, nextToCheckbox) {
     return checkboxElement;
 }
 
+function multiInput(form, id, labelText, initialValue) {
+    let container = div();
+    container.className = "multiInputContainer";
+
+    let inputs = [];
+
+    function addInput(value = '') {
+        let inputElement = document.createElement('input');
+        inputElement.value = value;
+
+        let deleteBtn = element('button', '×');
+        deleteBtn.className = "deleteBtn";
+
+        let row = div(inputElement, deleteBtn);
+        row.className = "multiInputRow";
+
+        deleteBtn.onclick = (e) => {
+            e.preventDefault();
+            row.remove();
+            const index = inputs.indexOf(inputElement);
+            if (index > -1) {
+                inputs.splice(index, 1);
+            }
+        };
+
+        container.appendChild(row);
+        inputs.push(inputElement);
+    }
+
+    let addButton = element('button', `Add ${labelText}`);
+    addButton.onclick = (e) => {
+        e.preventDefault();
+        addInput();
+    };
+
+    let wrapper = div(label(id, labelText), container, addButton);
+    wrapper.className = "inputWrapper multiInputWrapper";
+    form.appendChild(wrapper);
+
+    if (initialValue !== undefined) {
+        addInput(initialValue);
+    }
+
+    return {
+        get values() {
+            return inputs.map(i => i.value).filter(v => v !== '');
+        }
+    };
+}
+
 function viewObject(url) {
     renderObject(url, getObject(url));
 }
@@ -352,8 +402,7 @@ function newNonce(form, directory) {
 
 // New Account. RFC 8555 Section 7.3
 function newAccount(f, directory) {
-    const contact = input(f, 'contact', 'Contact (optional)', 'mailto:contact@example.com');
-    // TODO: allow multiple contacts
+    const contact = multiInput(f, 'contact', 'Contact (optional)', 'mailto:contact@example.com');
 
     let tosLink = element('a', 'Terms of Service');
     tosLink.href = directory.resource['meta']['termsOfService'];
@@ -373,8 +422,9 @@ function newAccount(f, directory) {
             },
             kid: null,
         }
-        if (contact.value !== '') {
-            data.msg.contact = [contact.value];
+        const contactValues = contact.values;
+        if (contactValues.length > 0) {
+            data.msg.contact = contactValues;
         }
         if (onlyReturnExisting.checked) {
             data.msg.onlyReturnExisting = true;
