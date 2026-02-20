@@ -244,11 +244,70 @@ function renderAccount(url, object) {
 }
 
 function renderOrder(url, object) {
-    return "TODO: order";
+    let orderDiv = div();
+
+    const expectedFields = ['status', 'expires', 'identifiers', 'authorizations', 'finalize', 'certificate', 'error'];
+    for (const field of expectedFields) {
+        if (object.resource[field] !== undefined) {
+            let value = object.resource[field];
+            if (field === 'identifiers' && Array.isArray(value)) {
+                value = value.map(i => `${i.type}:${i.value}`).join(', ');
+            }
+            if (field === 'authorizations' && Array.isArray(value)) {
+                value = `${value.length} authorizations`;
+            }
+            if (field === 'error') {
+                value = JSON.stringify(value);
+            }
+            orderDiv.appendChild(element('p', `${field}: ${value}`));
+        }
+    }
+
+    let authzH2 = element('h2', 'Authorizations');
+    let authzList = document.createElement('ul');
+    for (const authzUrl of object.resource.authorizations) {
+        let li = document.createElement('li');
+        let viewBtn = element('button', authzUrl);
+        viewBtn.onclick = () => viewObject(authzUrl);
+        li.appendChild(viewBtn);
+        authzList.appendChild(li);
+    }
+    orderDiv.appendChild(div(authzH2, authzList));
+
+    return orderDiv;
 }
 
 function renderAuthorization(url, object) {
-    return "TODO: authz"
+    let authzDiv = div();
+
+    const expectedFields = ['status', 'identifier', 'challenges', 'expires', 'wildcard', 'error'];
+    for (const field of expectedFields) {
+        if (object.resource[field] !== undefined) {
+            let value = object.resource[field];
+            if (field === 'identifier') {
+                value = `${value.type} ${value.value}`;
+            }
+            if (field === 'challenges' && Array.isArray(value)) {
+                value = `${value.length} challenges`;
+            }
+            if (field === 'error') {
+                value = JSON.stringify(value);
+            }
+            authzDiv.appendChild(element('p', `${field}: ${value}`));
+        }
+    }
+
+    let chH2 = element('h2', 'Challenges');
+    let chList = document.createElement('ul');
+    for (const ch of object.resource.challenges) {
+        let li = document.createElement('li');
+        li.innerText = `${ch.type} - ${ch.status} `;
+        // TODO: render challenge details and "Respond" button
+        chList.appendChild(li);
+    }
+    authzDiv.appendChild(div(chH2, chList));
+
+    return authzDiv;
 }
 
 function renderChallenge(url, object) {
@@ -515,6 +574,12 @@ function newOrder(f, directory) {
 
         return {
             msg: msg,
+            callback: (resourceJSON, location) => {
+                resourceJSON.authorizations.forEach(authzUrl => {
+                    let authz = {todo: "fetch me"} // TODO: Call fetchObject to get the authz
+                    setObject(authzUrl, '', 'authorization', location, authz, keyInput?.value);
+                });
+            }
         }
     }
 }
@@ -643,13 +708,13 @@ async function poster(data) {
     f.appendChild(div(label('signed', 'Signed Data'), signed));
 
     const go = goButton('submit', 'Submit Request', async () => {
-        await submit(data.url, signedData, data.type, data.parent, data.key);
+        await submit(data.url, signedData, data.type, data.parent, data.key, data.callback);
     })
 
     document.getElementById('poker').replaceChildren(h1, f, go);
 }
 
-async function submit(url, signed, objType, objParent, keyName) {
+async function submit(url, signed, objType, objParent, keyName, callback) {
     const pending = element('h1', 'Submitting...')
     document.getElementById('poker').replaceChildren(pending);
 
@@ -661,11 +726,15 @@ async function submit(url, signed, objType, objParent, keyName) {
     gotNonce(resp.headers, getDirectoryUrl(objParent))
 
     const locationHeader = resp.headers.get('Location');
+    const targetUrl = locationHeader || url;
 
     const resourceJSON = await resp.json();
 
-    if (locationHeader) {
-        setObject(locationHeader, '', objType, objParent, resourceJSON, keyName);
+    if (resp.ok) {
+        setObject(targetUrl, '', objType, objParent, resourceJSON, keyName);
+        if (callback) {
+            callback(resourceJSON, targetUrl);
+        }
         renderTreeview()
     }
 
