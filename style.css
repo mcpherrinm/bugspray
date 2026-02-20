@@ -115,6 +115,7 @@ body {
 .authorizationNav > .label::before { content: "🔐 "; }
 .challengeNav > .label::before { content: "🎲 "; }
 .certificateNav > .label::before { content: "📜 "; }
+.noncesNav > .label::before { content: "📦 "; }
 
 /* Selection highlighting (when we have a concept of 'selected' object) */
 .treeItem.selected > .label {

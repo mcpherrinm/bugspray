@@ -1,8 +1,14 @@
-import {clearStorage, getObject, setObject} from "./storage.js";
+import {clearStorage, getObject, listObjects, setObject} from "./storage.js";
 import {newKey, protect, sign} from "./jws.js";
 import {renderTreeview, setSelectedUrl} from "./nav.js";
 
-function setup() {
+export function setup() {
+    for (const [url, object] of listObjects()) {
+        if (object.type === 'nonces') {
+            const directoryUrl = object.parent;
+            noncePools[directoryUrl] = object.resource.nonces;
+        }
+    }
     renderTreeview();
     document.querySelector('button#new-directory').addEventListener('click', () => {
         setSelectedUrl(null);
@@ -14,6 +20,7 @@ function setup() {
             return
         }
         clearStorage();
+        noncePools = {};
         setSelectedUrl(null);
         renderTreeview();
         newDirectory();
@@ -143,6 +150,14 @@ function renderCertificate(url, object) {
     return "TODO: cert";
 }
 
+function renderNonces(url, object) {
+    let d = div(element('h2', 'Nonces in Pool'));
+    for (const nonce of object.resource.nonces) {
+        d.appendChild(element('li', nonce));
+    }
+    return d;
+}
+
 // View an object. Will dispatch to the correct view* function based on type
 export function renderObject(url, object) {
     setSelectedUrl(url);
@@ -175,6 +190,9 @@ export function renderObject(url, object) {
         case 'certificate':
             resource = renderCertificate(url, object);
             break;
+        case 'nonces':
+            document.getElementById('poker').replaceChildren(renderNonces(url, object));
+            return;
     }
 
     let rawH2 = element('h2', 'Resource JSON');
@@ -185,20 +203,42 @@ export function renderObject(url, object) {
     document.getElementById('poker').replaceChildren(h1, div(resourceURL), resource, div(rawH2, raw));
 }
 
-let noncePool = [];
+let noncePools = {}; // directoryUrl -> array of nonces
 
-function gotNonce(headers) {
+function gotNonce(headers, directoryUrl) {
+    if (!directoryUrl) return;
     const nonce = headers.get('replay-nonce');
     if (nonce !== null) {
-        noncePool.push(nonce);
+        if (!noncePools[directoryUrl]) {
+            noncePools[directoryUrl] = [];
+        }
+        noncePools[directoryUrl].push(nonce);
+        updateNonceStorage(directoryUrl);
     }
 }
 
-function getNonce() {
-    if (noncePool.length === 0) {
+function getNonce(directoryUrl) {
+    if (!directoryUrl || !noncePools[directoryUrl] || noncePools[directoryUrl].length === 0) {
         return 'no-nonces-run-new-nonce';
     }
-    return noncePool.pop()
+    const n = noncePools[directoryUrl].pop();
+    updateNonceStorage(directoryUrl);
+    return n;
+}
+
+function updateNonceStorage(directoryUrl) {
+    const pool = noncePools[directoryUrl] || [];
+    setObject(`${directoryUrl}/nonces`, `Nonce Pool (${pool.length})`, 'nonces', directoryUrl, {nonces: pool});
+    renderTreeview();
+}
+
+function getDirectoryUrl(url) {
+    let obj = getObject(url);
+    while (obj && obj.type !== 'directory') {
+        url = obj.parent;
+        obj = getObject(url);
+    }
+    return obj ? obj.url : null;
 }
 
 function goButton(id, label, onClick) {
@@ -230,7 +270,7 @@ function newDirectory() {
         console.log(`Getting directory url ${url}`)
         try {
             const resp = await fetch(url);
-            gotNonce(resp.headers);
+            gotNonce(resp.headers, url);
             const directory = await resp.json();
             setObject(url, name.value, 'directory', '', directory);
         } catch (e) {
@@ -249,10 +289,22 @@ function newDirectory() {
 }
 
 function newNonce(form, directory) {
+    let output = document.createElement('p');
     form.appendChild(goButton('go-get-nonce', 'Get Nonce', async () => {
-        const resp = await fetch(directory.resource['newNonce']);
-        gotNonce(resp.headers);
+        try {
+            const resp = await fetch(directory.resource['newNonce']);
+            const nonce = resp.headers.get('replay-nonce');
+            if (nonce) {
+                gotNonce(resp.headers, directory.url);
+                output.innerText = `Added nonce: ${nonce}`;
+            } else {
+                output.innerText = 'No nonce returned in headers';
+            }
+        } catch (e) {
+            output.innerText = `Error: ${e}`;
+        }
     }));
+    form.appendChild(output);
 }
 
 // New Account. RFC 8555 Section 7.3
@@ -395,7 +447,7 @@ function runMethod(method, directory) {
     const go = goButton('go-run-method', `Run ${method}`, async () => {
         await poster({
             url: directory.resource[method],
-            nonce: getNonce(),
+            nonce: getNonce(directory.url),
             type: type,
             parent: parent,
             ...getData(),
@@ -446,7 +498,7 @@ async function submit(url, signed, objType, objParent) {
         headers: {'Content-Type': 'application/jose+json'},
         body: signed,
     })
-    gotNonce(resp.headers)
+    gotNonce(resp.headers, getDirectoryUrl(objParent))
 
     const locationHeader = resp.headers.get('Location');
 
@@ -473,5 +525,3 @@ async function submit(url, signed, objType, objParent) {
     document.getElementById('poker').replaceChildren(h1, location, resource, view);
 }
 
-
-export {renderTreeview, viewObject, setup}
