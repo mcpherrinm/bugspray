@@ -61,6 +61,52 @@ function input(form, id, labelText, value) {
     return inputElement
 }
 
+function multi(form, id, name, createRow) {
+    let multiList = document.createElement("ul");
+    multiList.id = id;
+    multiList.style.listStyle = 'none';
+
+    let rows = [];
+
+    const addRow = () => {
+        const li = document.createElement('li');
+        li.className = 'multi-row';
+
+        const rowData = createRow();
+        const rowElt = rowData.elt || rowData;
+        const getValue = rowData.getValue || (() => rowElt.value);
+
+        const removeButton = element('button', 'Remove');
+        removeButton.type = 'button';
+        removeButton.className = 'multi-remove';
+        removeButton.onclick = () => {
+            multiList.removeChild(li);
+            rows = rows.filter(r => r.li !== li);
+        };
+
+        li.appendChild(rowElt);
+        li.appendChild(removeButton);
+        multiList.appendChild(li);
+        rows.push({li, getValue});
+    };
+
+    const addButton = element('button', 'Add');
+    addButton.type = 'button';
+    addButton.className = 'multi-add';
+    addButton.onclick = addRow;
+
+    const container = div(element('p', name), multiList, addButton);
+    container.className = "inputWrapper";
+    form.appendChild(container);
+
+    return {
+        elt: container,
+        values: function () {
+            return rows.map(r => r.getValue());
+        }
+    }
+}
+
 function checkbox(form, id, labelText, nextToCheckbox) {
     let checkboxElement = document.createElement('input');
     checkboxElement.id = id;
@@ -73,56 +119,6 @@ function checkbox(form, id, labelText, nextToCheckbox) {
     form.appendChild(r)
 
     return checkboxElement;
-}
-
-function multiInput(form, id, labelText, initialValue) {
-    let container = div();
-    container.className = "multiInputContainer";
-
-    let inputs = [];
-
-    function addInput(value = '') {
-        let inputElement = document.createElement('input');
-        inputElement.value = value;
-
-        let deleteBtn = element('button', '×');
-        deleteBtn.className = "deleteBtn";
-
-        let row = div(inputElement, deleteBtn);
-        row.className = "multiInputRow";
-
-        deleteBtn.onclick = (e) => {
-            e.preventDefault();
-            row.remove();
-            const index = inputs.indexOf(inputElement);
-            if (index > -1) {
-                inputs.splice(index, 1);
-            }
-        };
-
-        container.appendChild(row);
-        inputs.push(inputElement);
-    }
-
-    let addButton = element('button', `Add ${labelText}`);
-    addButton.onclick = (e) => {
-        e.preventDefault();
-        addInput();
-    };
-
-    let wrapper = div(label(id, labelText), container, addButton);
-    wrapper.className = "inputWrapper multiInputWrapper";
-    form.appendChild(wrapper);
-
-    if (initialValue !== undefined) {
-        addInput(initialValue);
-    }
-
-    return {
-        get values() {
-            return inputs.map(i => i.value).filter(v => v !== '');
-        }
-    };
 }
 
 function viewObject(url) {
@@ -402,7 +398,12 @@ function newNonce(form, directory) {
 
 // New Account. RFC 8555 Section 7.3
 function newAccount(f, directory) {
-    const contact = multiInput(f, 'contact', 'Contact (optional)', 'mailto:contact@example.com');
+    const contact = multi(f, 'contact', 'Contacts (optional)', () => {
+        const i = document.createElement('input');
+        i.type = 'text';
+        i.placeholder = 'mailto:admin@example.com';
+        return i;
+    });
 
     let tosLink = element('a', 'Terms of Service');
     tosLink.href = directory.resource['meta']['termsOfService'];
@@ -416,20 +417,14 @@ function newAccount(f, directory) {
     }
 
     return () => {
-        let data = {
+        return {
             msg: {
                 termsOfServiceAgreed: tosAgreed.checked,
+                contact: contact.values(),
+                onlyReturnExisting: onlyReturnExisting.checked ? true : undefined
             },
             kid: null,
-        }
-        const contactValues = contact.values;
-        if (contactValues.length > 0) {
-            data.msg.contact = contactValues;
-        }
-        if (onlyReturnExisting.checked) {
-            data.msg.onlyReturnExisting = true;
-        }
-        return data;
+        };
     }
 }
 
