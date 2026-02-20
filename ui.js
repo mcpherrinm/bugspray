@@ -338,6 +338,33 @@ export function renderObject(url, object) {
 
     let resourceURL = element('pre', url)
 
+    let reloadBtn = element('button', 'Reload');
+    reloadBtn.onclick = async () => {
+        const directoryUrl = getDirectoryUrl(url);
+        // Walk up parent chain to find account URL for KID
+        let kid = url;
+        let cur = object;
+        while (cur && cur.type !== 'account') {
+            kid = cur.parent;
+            cur = getObject(kid);
+        }
+        await poster({
+            url: url,
+            nonce: getNonce(directoryUrl),
+            type: object.type,
+            parent: object.parent,
+            key: object.key,
+            kid: kid,
+            msg: "",
+        });
+    };
+
+    if (!object.resource) {
+        let msg = element('p', 'Resource not yet fetched. Click Reload to fetch.');
+        document.getElementById('poker').replaceChildren(h1, div(resourceURL, reloadBtn), msg);
+        return;
+    }
+
     let resource;
     switch (object.type) {
         case 'directory':
@@ -368,7 +395,7 @@ export function renderObject(url, object) {
     raw.className = 'rawObject';
     raw.value = JSON.stringify(object.resource, null, 2);
 
-    document.getElementById('poker').replaceChildren(h1, div(resourceURL), resource, div(rawH2, raw));
+    document.getElementById('poker').replaceChildren(h1, div(resourceURL, reloadBtn), resource, div(rawH2, raw));
 }
 
 let noncePools = {}; // directoryUrl -> array of nonces
@@ -574,10 +601,9 @@ function newOrder(f, directory) {
 
         return {
             msg: msg,
-            callback: (resourceJSON, location) => {
+            callback: (resourceJSON, location, keyName) => {
                 resourceJSON.authorizations.forEach(authzUrl => {
-                    let authz = {todo: "fetch me"} // TODO: Call fetchObject to get the authz
-                    setObject(authzUrl, '', 'authorization', location, authz, keyInput?.value);
+                    setObject(authzUrl, '', 'authorization', location, null, keyName);
                 });
             }
         }
@@ -733,7 +759,7 @@ async function submit(url, signed, objType, objParent, keyName, callback) {
     if (resp.ok) {
         setObject(targetUrl, '', objType, objParent, resourceJSON, keyName);
         if (callback) {
-            callback(resourceJSON, targetUrl);
+            callback(resourceJSON, targetUrl, keyName);
         }
         renderTreeview()
     }
@@ -742,13 +768,13 @@ async function submit(url, signed, objType, objParent, keyName, callback) {
 
     let h1 = element('h1', 'Result');
 
-    const location = element('p', locationHeader || 'unknown location');
+    const location = element('p', targetUrl);
     let resource = element('textarea', '');
     resource.value = JSON.stringify(resourceJSON, null, 2);
     resource.id = 'result';
 
     const view = goButton('view', 'Go to object', () => {
-        viewObject(locationHeader);
+        viewObject(targetUrl);
     })
 
     document.getElementById('poker').replaceChildren(h1, location, resource, view);
