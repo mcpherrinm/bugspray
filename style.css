@@ -16,15 +16,110 @@ body {
     width: 25%;
     max-width: 30rem;
     background: #fff;
+    display: flex;
+    flex-direction: column;
 }
 
-#nav ul {
-    padding-left: 1rem;
+#treeview {
+    flex: 1;
+    overflow-y: auto;
+    padding-top: 0.5rem;
 }
 
-#nav span:hover {
-    background: #ececec;
+#newDir {
+    padding: 1rem;
+    border-top: 1px solid #ccc;
+    background: #fff;
+}
+
+#newDir button {
+    width: 100%;
+    margin-bottom: 0.5rem;
+}
+
+#treeview ul {
+    list-style: none;
+    padding-left: 1.2rem;
+    position: relative;
+}
+
+#treeview > ul {
+    padding-left: 0.5rem;
+}
+
+.treeItem {
+    line-height: 1.5rem;
+    white-space: nowrap;
+    position: relative;
+}
+
+.treeItem::before {
+    content: "";
+    position: absolute;
+    left: -0.6rem;
+    top: 0;
+    bottom: 0;
+    border-left: 1px solid #ddd;
+}
+
+.treeItem:last-child::before {
+    height: 0.75rem;
+}
+
+.treeItem::after {
+    content: "";
+    position: absolute;
+    left: -0.6rem;
+    top: 0.75rem;
+    width: 0.5rem;
+    border-top: 1px solid #ddd;
+}
+
+#treeview > ul > .treeItem::before, #treeview > ul > .treeItem::after {
+    display: none;
+}
+
+.treeItem .toggle {
+    display: inline-block;
+    width: 1rem;
     cursor: pointer;
+    font-size: 0.7rem;
+    color: #666;
+    user-select: none;
+    text-align: center;
+    visibility: hidden;
+}
+
+.treeItem.hasChildren > .toggle {
+    visibility: visible;
+}
+
+.treeItem .label {
+    cursor: pointer;
+    padding: 2px 4px;
+    border-radius: 3px;
+}
+
+.treeItem .label:hover {
+    background: #e0f0ff;
+}
+
+.treeItem.collapsed > ul {
+    display: none;
+}
+
+/* Icons/Colors for types */
+.directoryNav > .label::before { content: "📁 "; }
+.accountNav > .label::before { content: "👤 "; }
+.orderNav > .label::before { content: "📋 "; }
+.authorizationNav > .label::before { content: "🔐 "; }
+.challengeNav > .label::before { content: "🎲 "; }
+.certificateNav > .label::before { content: "📜 "; }
+
+/* Selection highlighting (when we have a concept of 'selected' object) */
+.treeItem.selected > .label {
+    background: #007bff;
+    color: #fff;
 }
 
 #main {

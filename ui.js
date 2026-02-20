@@ -1,40 +1,24 @@
-import {clearStorage, getObject, listObjects, setObject} from "./storage.js";
+import {clearStorage, getObject, setObject} from "./storage.js";
 import {newKey, protect, sign} from "./jws.js";
+import {renderTreeview, setSelectedUrl} from "./nav.js";
 
 function setup() {
     renderTreeview();
-    document.querySelector('button#new-directory').addEventListener('click', newDirectory);
+    document.querySelector('button#new-directory').addEventListener('click', () => {
+        setSelectedUrl(null);
+        renderTreeview();
+        newDirectory();
+    });
     document.querySelector('button#clear-storage').addEventListener('click', () => {
         if (!confirm("Are you sure you want to clear all data?")) {
             return
         }
         clearStorage();
+        setSelectedUrl(null);
         renderTreeview();
         newDirectory();
     });
     newDirectory();
-}
-
-// addNavItem adds a new child to the passed in parent ul
-// It returns a new ul list for this object's children
-function addNavItem(url, object, parentList) {
-    let child = document.createElement('li');
-    child.className = `${object.type}Nav`;
-    let label = document.createElement('span');
-    if (object.name !== '') {
-        label.innerText = object.name;
-    } else {
-        label.innerText = url;
-    }
-
-    child.appendChild(label);
-    const list = document.createElement('ul');
-    child.appendChild(list);
-    parentList.appendChild(child);
-
-    label.onclick = () => {renderObject(url, object)}
-
-    return list;
 }
 
 function div(...obj) {
@@ -82,30 +66,6 @@ function checkbox(form, id, labelText, nextToCheckbox) {
     form.appendChild(r)
 
     return checkboxElement;
-}
-
-// Call renderSidebar after updating a stored object
-function renderTreeview() {
-    // We just re-render the whole structure each time
-    // tree maps url -> ul list, where children of that url should be added
-    let tree = new Map();
-
-    // Create a new root:
-    let root = document.createElement('ul');
-    tree.set('', root)
-
-    for (const [url, object] of listObjects()) {
-        let parentList = tree.get(object.parent);
-        if (parentList === undefined) {
-            console.log(`Failed to find parent for '${url}'`)
-            parentList = root;
-        }
-        tree.set(url, addNavItem(url, object, parentList));
-    }
-
-    // Swap in new:
-    let navContainer = document.getElementById('treeview')
-    navContainer.replaceChildren(root)
 }
 
 function viewObject(url) {
@@ -184,7 +144,9 @@ function renderCertificate(url, object) {
 }
 
 // View an object. Will dispatch to the correct view* function based on type
-function renderObject(url, object) {
+export function renderObject(url, object) {
+    setSelectedUrl(url);
+    renderTreeview();
     let text = `${object.type}`
     if (object.name !== '') {
         text = `${object.name} ${text}`
@@ -318,7 +280,7 @@ function newAccount(f, directory) {
             key: keyName.value,
             useKID: false,
             type: 'account',
-            parent: directory,
+            parent: directory.url,
         }
         if (contact.value !== '') {
             data.msg.contact = [contact.value];
@@ -394,6 +356,7 @@ function runMethod(method, directory) {
     let f = document.createElement('form');
 
     let type = null;
+    let parent = directory.url;
     let getData = () => {return {}};
 
     switch (method) {
@@ -434,6 +397,7 @@ function runMethod(method, directory) {
             url: directory.resource[method],
             nonce: getNonce(),
             type: type,
+            parent: parent,
             ...getData(),
         })
     })
