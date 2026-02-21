@@ -331,14 +331,42 @@ async function renderChallenge(url, object) {
         challDiv.appendChild(element('p', `error: ${JSON.stringify(ch.error)}`));
     }
 
-    // Compute key authorization
-    if (object.key && ch.token) {
+    // Compute challenge-specific instructions
+    const authz = getObject(object.parent);
+    const domain = authz?.resource?.identifier?.value || '<domain>';
+
+    if (ch.type === 'dns-persist-01') {
+        // dns-persist-01: RFC draft-ietf-acme-dns-persist
+        // A static TXT record at _validation-persist.{domain} that persists across renewals.
+        // Format: {ca-caa-domain}; accounturi={account-uri}
+
+        // Walk up the parent chain to find the account URI: challenge -> authz -> order -> account
+        let accountUri = '<account-uri>';
+        if (authz) {
+            const orderObj = getObject(authz.parent);
+            if (orderObj?.type === 'account') {
+                accountUri = authz.parent;
+            } else if (orderObj) {
+                accountUri = orderObj.parent || '<account-uri>';
+            }
+        }
+
+        // Get the CA's CAA authorization domain from directory metadata
+        const directoryUrl = getDirectoryUrl(object.parent);
+        const directory = getObject(directoryUrl);
+        const caaIdentities = directory?.resource?.meta?.caaIdentities;
+        const caDomain = (caaIdentities && caaIdentities.length > 0) ? caaIdentities[0] : '<ca-caa-domain>';
+
+        let instructionsH2 = element('h2', 'Instructions');
+        challDiv.appendChild(instructionsH2);
+        challDiv.appendChild(element('p', 'Create a persistent TXT record (does not need to change between renewals):'));
+        challDiv.appendChild(copiable(`_validation-persist.${domain}`));
+        challDiv.appendChild(element('p', 'Value:'));
+        challDiv.appendChild(copiable(`${caDomain}; accounturi=${accountUri}`));
+    } else if (object.key && ch.token) {
         const key = await newKey(object.key);
         const thumb = await thumbprint(key);
         const keyAuthz = `${ch.token}.${thumb}`;
-
-        const authz = getObject(object.parent);
-        const domain = authz?.resource?.identifier?.value || '<domain>';
 
         let instructionsH2 = element('h2', 'Instructions');
         challDiv.appendChild(instructionsH2);
