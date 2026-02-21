@@ -283,6 +283,51 @@ function renderOrder(url, object) {
     }
     orderDiv.appendChild(div(authzH2, authzList));
 
+    if (object.resource.finalize) {
+        let finalizeH2 = element('h2', 'Finalize Order');
+        let csrLabel = element('p', 'CSR (PEM or Base64url-encoded DER):');
+        let csrInput = document.createElement('textarea');
+        csrInput.id = 'csr-input';
+        csrInput.placeholder = '-----BEGIN CERTIFICATE REQUEST-----\n...\n-----END CERTIFICATE REQUEST-----';
+        csrInput.className = 'rawObject';
+
+        let finalizeBtn = goButton('finalize-order', 'Finalize Order', async () => {
+            const directoryUrl = getDirectoryUrl(url);
+            let kid = url;
+            let cur = object;
+            while (cur && cur.type !== 'account') {
+                kid = cur.parent;
+                cur = getObject(kid);
+            }
+
+            // Convert PEM to base64url DER if needed
+            let csrValue = csrInput.value.trim();
+            if (csrValue.startsWith('-----BEGIN')) {
+                csrValue = csrValue
+                    .replace(/-----BEGIN CERTIFICATE REQUEST-----/g, '')
+                    .replace(/-----END CERTIFICATE REQUEST-----/g, '')
+                    .replace(/\s+/g, '');
+                // Standard base64 to base64url
+                csrValue = csrValue
+                    .replace(/\+/g, '-')
+                    .replace(/\//g, '_')
+                    .replace(/=+$/g, '');
+            }
+
+            await poster({
+                url: object.resource.finalize,
+                nonce: getNonce(directoryUrl),
+                type: 'order',
+                parent: object.parent,
+                key: object.key,
+                kid: kid,
+                msg: { csr: csrValue },
+            });
+        });
+
+        orderDiv.appendChild(div(finalizeH2, csrLabel, csrInput, finalizeBtn));
+    }
+
     return orderDiv;
 }
 
