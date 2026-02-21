@@ -1,5 +1,5 @@
 import {clearStorage, getObject, listObjects, setObject} from "./storage.js";
-import {newKey, protect, sign} from "./jws.js";
+import {newKey, protect, sign, thumbprint} from "./jws.js";
 import {renderTreeview, setSelectedUrl} from "./nav.js";
 
 export function setup() {
@@ -37,6 +37,15 @@ function div(...obj) {
 function element(tag, innerText) {
     let e = document.createElement(tag);
     e.innerText = innerText;
+    return e;
+}
+
+function copiable(value) {
+    let e = document.createElement('input');
+    e.type = 'text';
+    e.readOnly = true;
+    e.value = value;
+    e.className = 'copiable';
     return e;
 }
 
@@ -310,8 +319,51 @@ function renderAuthorization(url, object) {
     return authzDiv;
 }
 
-function renderChallenge(url, object) {
-    return "TODO: chall"
+async function renderChallenge(url, object) {
+    let challDiv = div();
+
+    const ch = object.resource;
+    challDiv.appendChild(element('p', `type: ${ch.type}`));
+    challDiv.appendChild(element('p', `status: ${ch.status}`));
+    challDiv.appendChild(element('p', `token: ${ch.token}`));
+
+    if (ch.error) {
+        challDiv.appendChild(element('p', `error: ${JSON.stringify(ch.error)}`));
+    }
+
+    // Compute key authorization
+    if (object.key && ch.token) {
+        const key = await newKey(object.key);
+        const thumb = await thumbprint(key);
+        const keyAuthz = `${ch.token}.${thumb}`;
+
+        const authz = getObject(object.parent);
+        const domain = authz?.resource?.identifier?.value || '<domain>';
+
+        let instructionsH2 = element('h2', 'Instructions');
+        challDiv.appendChild(instructionsH2);
+
+        if (ch.type === 'http-01') {
+            challDiv.appendChild(element('p', `Serve the following at:`));
+            challDiv.appendChild(copiable(`http://${domain}/.well-known/acme-challenge/${ch.token}`));
+            challDiv.appendChild(element('p', 'Content:'));
+            challDiv.appendChild(copiable(keyAuthz));
+        } else if (ch.type === 'dns-01' || ch.type === 'dns-account-01') {
+            const digest = await window.crypto.subtle.digest("SHA-256", new TextEncoder().encode(keyAuthz));
+            const bytes = new Uint8Array(digest);
+            const b64Val = btoa(String.fromCharCode(...bytes))
+                .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+            challDiv.appendChild(element('p', `Create a TXT record:`));
+            challDiv.appendChild(copiable(`_acme-challenge.${domain}`));
+            challDiv.appendChild(element('p', 'Value:'));
+            challDiv.appendChild(copiable(b64Val));
+        } else {
+            challDiv.appendChild(element('p', 'Key Authorization:'));
+            challDiv.appendChild(copiable(keyAuthz));
+        }
+    }
+
+    return challDiv;
 }
 
 function renderCertificate(url, object) {
@@ -327,7 +379,7 @@ function renderNonces(url, object) {
 }
 
 // View an object. Will dispatch to the correct view* function based on type
-export function renderObject(url, object) {
+export async function renderObject(url, object) {
     setSelectedUrl(url);
     renderTreeview();
     let text = `${object.type}`
@@ -348,6 +400,14 @@ export function renderObject(url, object) {
             kid = cur.parent;
             cur = getObject(kid);
         }
+        let callback;
+        if (object.type === 'authorization') {
+            callback = (resourceJSON, location, keyName) => {
+                resourceJSON.challenges.forEach(ch => {
+                    setObject(ch.url, '', 'challenge', location, null, keyName);
+                });
+            };
+        }
         await poster({
             url: url,
             nonce: getNonce(directoryUrl),
@@ -356,6 +416,7 @@ export function renderObject(url, object) {
             key: object.key,
             kid: kid,
             msg: "",
+            callback: callback,
         });
     };
 
@@ -380,7 +441,7 @@ export function renderObject(url, object) {
             resource = renderAuthorization(url, object);
             break;
         case 'challenge':
-            resource = renderChallenge(url, object);
+            resource = await renderChallenge(url, object);
             break;
         case 'certificate':
             resource = renderCertificate(url, object);

@@ -121,4 +121,11 @@ async function sign(key, prot, payload) {
     }, null, 2);
 }
 
-export {newKey, protect, sign};
+async function thumbprint(key) {
+    const jwk = await window.crypto.subtle.exportKey("jwk", key.publicKey);
+    const input = JSON.stringify({crv: jwk.crv, kty: jwk.kty, x: jwk.x, y: jwk.y});
+    const hash = await window.crypto.subtle.digest("SHA-256", new TextEncoder().encode(input));
+    return b64array(hash);
+}
+
+export {newKey, protect, sign, thumbprint};
