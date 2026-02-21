@@ -400,6 +400,26 @@ async function renderChallenge(url, object) {
         }
     }
 
+    let respondBtn = goButton('respond-challenge', 'Respond to Challenge', async () => {
+        const directoryUrl = getDirectoryUrl(url);
+        let kid = url;
+        let cur = object;
+        while (cur && cur.type !== 'account') {
+            kid = cur.parent;
+            cur = getObject(kid);
+        }
+        await poster({
+            url: url,
+            nonce: getNonce(directoryUrl),
+            type: object.type,
+            parent: object.parent,
+            key: object.key,
+            kid: kid,
+            msg: {},
+        });
+    });
+    challDiv.appendChild(respondBtn);
+
     return challDiv;
 }
 
