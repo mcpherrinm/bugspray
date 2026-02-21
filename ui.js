@@ -385,6 +385,15 @@ async function renderChallenge(url, object) {
             challDiv.appendChild(copiable(`_acme-challenge.${domain}`));
             challDiv.appendChild(element('p', 'Value:'));
             challDiv.appendChild(copiable(b64Val));
+        } else if (ch.type === 'tls-alpn-01') {
+            const digest = await window.crypto.subtle.digest("SHA-256", new TextEncoder().encode(keyAuthz));
+            const bytes = new Uint8Array(digest);
+            const hexVal = Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+            challDiv.appendChild(element('p', 'Serve a TLS connection on port 443 with ALPN protocol "acme-tls/1". The certificate must have:'));
+            challDiv.appendChild(element('p', 'Subject Alternative Name (dNSName):'));
+            challDiv.appendChild(copiable(domain));
+            challDiv.appendChild(element('p', 'A critical ACME extension (OID 1.3.6.1.5.5.7.1.31) containing an ASN.1 DER-encoded OctetString of the SHA-256 digest of the key authorization:'));
+            challDiv.appendChild(copiable(hexVal));
         } else {
             challDiv.appendChild(element('p', 'Key Authorization:'));
             challDiv.appendChild(copiable(keyAuthz));
