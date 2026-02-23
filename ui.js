@@ -477,6 +477,13 @@ export async function renderObject(url, object) {
                 });
             };
         }
+        if (object.type === 'order') {
+            callback = (resourceJSON, location, keyName) => {
+                if (resourceJSON.certificate) {
+                    setObject(resourceJSON.certificate, '', 'certificate', location, null, keyName);
+                }
+            }
+        }
         await poster({
             url: url,
             nonce: getNonce(directoryUrl),
@@ -735,6 +742,9 @@ function newOrder(f, directory) {
                 resourceJSON.authorizations.forEach(authzUrl => {
                     setObject(authzUrl, '', 'authorization', location, null, keyName);
                 });
+                if (resourceJSON.certificate) {
+                    setObject(resourceJSON.certificate, '', 'certificate', location, null, keyName);
+                }
             }
         }
     }
@@ -935,7 +945,14 @@ async function submit(url, signed, objType, objParent, keyName, callback) {
     const locationHeader = resp.headers.get('Location');
     const targetUrl = locationHeader || url;
 
-    const resourceJSON = await resp.json();
+    let resourceJSON;
+    let contentType = resp.headers.get('Content-Type');
+    if (contentType !== 'application/json') {
+        const resourceText = await resp.text();
+        resourceJSON = {'value': resourceText, 'contentType': contentType};
+    } else {
+        resourceJSON = await resp.json();
+    }
 
     if (resp.ok) {
         setObject(targetUrl, '', objType, objParent, resourceJSON, keyName);
