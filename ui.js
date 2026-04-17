@@ -6,7 +6,9 @@ export function setup() {
     for (const [url, object] of listObjects()) {
         if (object.type === 'nonces') {
             const directoryUrl = object.parent;
-            noncePools[directoryUrl] = object.resource.nonces;
+            noncePools[directoryUrl] = object.resource.nonces.map(n =>
+                typeof n === 'string' ? {nonce: n, timestamp: null} : n
+            );
         }
     }
     renderTreeview();
@@ -440,11 +442,44 @@ function renderCertificate(url, object) {
 }
 
 function renderNonces(url, object) {
+    const directoryUrl = object.parent;
     let d = div(element('h2', 'Nonces in Pool'));
-    for (const nonce of object.resource.nonces) {
-        d.appendChild(element('li', nonce));
-    }
+    let list = document.createElement('ul');
+    list.className = 'nonceList';
+    object.resource.nonces.forEach((entry, index) => {
+        const item = typeof entry === 'string' ? {nonce: entry, timestamp: null} : entry;
+        let li = document.createElement('li');
+        li.className = 'nonceRow';
+
+        let nonceText = element('span', item.nonce);
+        nonceText.className = 'nonceValue';
+
+        let timeText = element('span', item.timestamp ? new Date(item.timestamp).toLocaleString() : 'unknown time');
+        timeText.className = 'nonceTime';
+
+        let del = element('button', '✕');
+        del.className = 'nonceDelete';
+        del.title = 'Delete nonce';
+        del.onclick = () => {
+            deleteNonce(directoryUrl, item.nonce);
+        };
+
+        li.append(nonceText, timeText, del);
+        list.appendChild(li);
+    });
+    d.appendChild(list);
     return d;
+}
+
+function deleteNonce(directoryUrl, nonce) {
+    const pool = noncePools[directoryUrl] || [];
+    const idx = pool.findIndex(e => (typeof e === 'string' ? e : e.nonce) === nonce);
+    if (idx >= 0) {
+        pool.splice(idx, 1);
+        updateNonceStorage(directoryUrl);
+        const url = `${directoryUrl}/nonces`;
+        renderObject(url, getObject(url));
+    }
 }
 
 // View an object. Will dispatch to the correct view* function based on type
@@ -544,7 +579,7 @@ function gotNonce(headers, directoryUrl) {
         if (!noncePools[directoryUrl]) {
             noncePools[directoryUrl] = [];
         }
-        noncePools[directoryUrl].push(nonce);
+        noncePools[directoryUrl].push({nonce: nonce, timestamp: Date.now()});
         updateNonceStorage(directoryUrl);
     }
 }
@@ -553,9 +588,9 @@ function getNonce(directoryUrl) {
     if (!directoryUrl || !noncePools[directoryUrl] || noncePools[directoryUrl].length === 0) {
         return 'no-nonces-run-new-nonce';
     }
-    const n = noncePools[directoryUrl].pop();
+    const entry = noncePools[directoryUrl].pop();
     updateNonceStorage(directoryUrl);
-    return n;
+    return typeof entry === 'string' ? entry : entry.nonce;
 }
 
 function updateNonceStorage(directoryUrl) {

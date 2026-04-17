@@ -218,3 +218,40 @@ h1 {
 .copiable {
     width: 100%;
 }
+
+.nonceList {
+    list-style: none;
+    padding: 0;
+}
+
+.nonceRow {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.25rem 0;
+    border-bottom: 1px solid #eee;
+}
+
+.nonceValue {
+    flex: 1;
+    font-family: monospace;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.nonceTime {
+    color: #666;
+    font-size: 0.85rem;
+    white-space: nowrap;
+}
+
+.nonceDelete {
+    background: #dc3545;
+    padding: 0.1rem 0.5rem;
+    font-size: 0.85rem;
+    border-radius: 4px;
+}
+
+.nonceDelete:hover {
+    background: #c82333;
+}
