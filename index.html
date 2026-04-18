@@ -17,18 +17,16 @@
     </script>
 </head>
 <body>
-<div id="main">
-    <div id="nav">
-        <div id="treeview"></div>
-        <div id="newDir">
-            <button type="button" id="new-directory">Add Directory</button>
-            <button type="button" id="clear-storage">Clear Storage</button>
-        </div>
-    </div>
-    <div id="poker">
-    </div>
-    <div id="poster" hidden>
+<div id="nav">
+    <div id="treeview"></div>
+    <div id="newDir">
+        <button type="button" id="new-directory">Add Directory</button>
+        <button type="button" id="clear-storage">Clear Storage</button>
     </div>
 </div>
+<div class="splitter" data-resizes="nav" data-side="left"></div>
+<div id="poker"></div>
+<div class="splitter" data-resizes="poster" data-side="right"></div>
+<div id="poster" hidden></div>
 </body>
 </html>

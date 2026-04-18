@@ -18,6 +18,7 @@ export function setup() {
         }
     }
     renderTreeview();
+    initSplitters();
     document.querySelector('button#new-directory').addEventListener('click', () => {
         setSelectedUrl(null);
         renderTreeview();
@@ -699,6 +700,43 @@ function runMethod(method, directory, signer) {
  * @property {(resource: any, targetUrl: string) => void} [postProcess]
  */
 
+/**
+ * Wire up the column splitters so the user can drag the dividers. Each
+ * `.splitter` element names the target column to resize and which side it
+ * sits on. Dragging adjusts the target's width in pixels.
+ */
+function initSplitters() {
+    document.querySelectorAll('.splitter').forEach((sp) => {
+        sp.addEventListener('mousedown', (/** @type {Event} */ ev) => {
+            const e = /** @type {MouseEvent} */ (ev);
+            const targetId = /** @type {HTMLElement} */ (sp).dataset.resizes;
+            const side = /** @type {HTMLElement} */ (sp).dataset.side;
+            if (!targetId) return;
+            const target = document.getElementById(targetId);
+            if (!target) return;
+
+            e.preventDefault();
+            sp.classList.add('dragging');
+            const startX = e.clientX;
+            const startWidth = target.offsetWidth;
+
+            function onMove(/** @type {MouseEvent} */ mv) {
+                const dx = mv.clientX - startX;
+                // 'left' side splitter shrinks/grows the target leftward.
+                const newWidth = side === 'right' ? startWidth - dx : startWidth + dx;
+                target.style.width = `${Math.max(120, newWidth)}px`;
+            }
+            function onUp() {
+                sp.classList.remove('dragging');
+                document.removeEventListener('mousemove', onMove);
+                document.removeEventListener('mouseup', onUp);
+            }
+            document.addEventListener('mousemove', onMove);
+            document.addEventListener('mouseup', onUp);
+        });
+    });
+}
+
 function hidePoster() {
     const p = document.getElementById('poster');
     p.hidden = true;
@@ -759,9 +797,9 @@ function renderRequester(cfg) {
     reqPane.append(
         nonceBanner,
         labeled('URL', urlInput),
-        labeled('Payload', payloadArea),
-        labeled('Protected Header', protectedArea),
-        labeled('Signed JWS', signedArea),
+        labeled('Payload', payloadArea, true),
+        labeled('Protected Header', protectedArea, true),
+        labeled('Signed JWS', signedArea, true),
     );
 
     poster.replaceChildren(tabBar, reqPane, respPane);
@@ -884,12 +922,20 @@ function makeTabBtn(/** @type {string} */ text) {
     return b;
 }
 
-/** Wrap a control with an uppercase field-label div. */
-function labeled(/** @type {string} */ name, /** @type {HTMLElement} */ control) {
+/**
+ * Wrap a control with an uppercase field-label div. Pass grow=true for
+ * textarea rows that should expand to fill available vertical space.
+ * @param {string} name
+ * @param {HTMLElement} control
+ * @param {boolean} [grow]
+ */
+function labeled(name, control, grow = false) {
     const lbl = document.createElement('div');
     lbl.className = 'fieldLabel';
     lbl.innerText = name;
-    return div(lbl, control);
+    const wrapper = div(lbl, control);
+    if (grow) wrapper.className = 'grow';
+    return wrapper;
 }
 
 /**

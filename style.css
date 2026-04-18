@@ -8,17 +8,30 @@
 body {
     display: flex;
     min-height: 100vh;
+    height: 100vh;
     background: #f0f0f0;
     color: #333;
 }
 
 #nav {
-    width: 25%;
-    max-width: 30rem;
+    width: 18rem;
+    flex-shrink: 0;
     background: #fff;
     display: flex;
     flex-direction: column;
+    min-width: 8rem;
+    overflow: hidden;
 }
+
+.splitter {
+    width: 6px;
+    flex-shrink: 0;
+    background: #ddd;
+    cursor: col-resize;
+    user-select: none;
+}
+
+.splitter:hover, .splitter.dragging { background: #888; }
 
 #treeview {
     flex: 1;
@@ -123,16 +136,11 @@ body {
     color: #fff;
 }
 
-#main {
-    display: flex;
-    flex: 1;
-    flex-direction: row;
-}
-
 #poker {
-    width: 100%;
-    max-width: 50rem;
+    flex: 1;
+    min-width: 12rem;
     padding: 1rem;
+    overflow-y: auto;
 }
 
 .inputWrapper, .checkboxWrapper {
@@ -183,27 +191,50 @@ textarea {
     height: 20rem;
 }
 
-#poker {
-    border-left: 1px solid #ccc;
-    border-right: 1px solid #ccc;
-}
 
 #poster {
     width: 30rem;
+    min-width: 12rem;
     flex-shrink: 0;
     padding: 1rem;
     background: #fafafa;
-    border-right: 1px solid #ccc;
-    overflow-y: auto;
+    overflow: hidden;
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
+    height: 100vh;
 }
 
 #poster[hidden] { display: none; }
 
+#poster .tabPane {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    overflow-y: auto;
+}
+
+#poster .tabPane[hidden] { display: none; }
+
+/* Textarea-bearing rows grow to share remaining vertical space. */
+#poster .grow {
+    flex: 1;
+    min-height: 6rem;
+    display: flex;
+    flex-direction: column;
+}
+
+#poster .grow textarea {
+    flex: 1;
+    width: 100%;
+    height: auto;
+    min-height: 4rem;
+    resize: vertical;
+}
+
 #poster textarea {
-    height: 6rem;
     font-family: monospace;
     font-size: 0.85rem;
 }
@@ -245,8 +276,6 @@ textarea {
     color: #007bff;
     border-bottom-color: #007bff;
 }
-
-.tabPane[hidden] { display: none; }
 
 .posterClose {
     background: none;
