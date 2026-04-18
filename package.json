@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "test": "bun test",
+    "integration": "bun test acme.integration.test.js",
     "typecheck": "bunx tsc -p jsconfig.json --noEmit",
     "cli": "bun run cli.js"
   },
