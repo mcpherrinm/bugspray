@@ -2,18 +2,18 @@ import {clearStorage, getObject, listObjects, setObject} from "./storage.js";
 import {getOrCreateKey, protect, sign, thumbprint} from "./jws.js";
 import {renderTreeview, setSelectedUrl} from "./nav.js";
 import {buildBrowserEnv} from "./browserEnv.js";
+import {getNoncePool, resetNoncePools} from "./acme.js";
 
 const env = buildBrowserEnv();
 const subtle = env.subtle;
 const newKey = (/** @type {string} */ name) => getOrCreateKey(env.keyStore, subtle, name);
 
 export function setup() {
-    for (const [url, object] of listObjects()) {
+    // NoncePool.load is lazy; touching each directory's pool here primes the
+    // registry so listObjects already shows the correct names in the treeview.
+    for (const [, object] of listObjects()) {
         if (object.type === 'nonces') {
-            const directoryUrl = object.parent;
-            noncePools[directoryUrl] = object.resource.nonces.map(n =>
-                typeof n === 'string' ? {nonce: n, timestamp: null} : n
-            );
+            getNoncePool(env, object.parent);
         }
     }
     renderTreeview();
@@ -27,7 +27,7 @@ export function setup() {
             return
         }
         clearStorage();
-        noncePools = {};
+        resetNoncePools();
         setSelectedUrl(null);
         renderTreeview();
         newDirectory();
@@ -448,11 +448,11 @@ function renderCertificate(url, object) {
 
 function renderNonces(url, object) {
     const directoryUrl = object.parent;
+    const pool = getNoncePool(env, directoryUrl);
     let d = div(element('h2', 'Nonces in Pool'));
     let list = document.createElement('ul');
     list.className = 'nonceList';
-    object.resource.nonces.forEach((entry, index) => {
-        const item = typeof entry === 'string' ? {nonce: entry, timestamp: null} : entry;
+    pool.entries.forEach((item) => {
         let li = document.createElement('li');
         li.className = 'nonceRow';
 
@@ -466,7 +466,9 @@ function renderNonces(url, object) {
         del.className = 'nonceDelete';
         del.title = 'Delete nonce';
         del.onclick = () => {
-            deleteNonce(directoryUrl, item.nonce);
+            pool.delete(item.nonce);
+            renderTreeview();
+            renderObject(url, getObject(url));
         };
 
         li.append(nonceText, timeText, del);
@@ -474,17 +476,6 @@ function renderNonces(url, object) {
     });
     d.appendChild(list);
     return d;
-}
-
-function deleteNonce(directoryUrl, nonce) {
-    const pool = noncePools[directoryUrl] || [];
-    const idx = pool.findIndex(e => (typeof e === 'string' ? e : e.nonce) === nonce);
-    if (idx >= 0) {
-        pool.splice(idx, 1);
-        updateNonceStorage(directoryUrl);
-        const url = `${directoryUrl}/nonces`;
-        renderObject(url, getObject(url));
-    }
 }
 
 // View an object. Will dispatch to the correct view* function based on type
@@ -575,33 +566,17 @@ export async function renderObject(url, object) {
     document.getElementById('poker').replaceChildren(h1, div(resourceURL, reloadBtn), resource, div(rawH2, raw));
 }
 
-let noncePools = {}; // directoryUrl -> array of nonces
-
 function gotNonce(headers, directoryUrl) {
     if (!directoryUrl) return;
-    const nonce = headers.get('replay-nonce');
-    if (nonce !== null) {
-        if (!noncePools[directoryUrl]) {
-            noncePools[directoryUrl] = [];
-        }
-        noncePools[directoryUrl].push({nonce: nonce, timestamp: Date.now()});
-        updateNonceStorage(directoryUrl);
-    }
+    getNoncePool(env, directoryUrl).captureFromHeaders(headers);
+    renderTreeview();
 }
 
 function getNonce(directoryUrl) {
-    if (!directoryUrl || !noncePools[directoryUrl] || noncePools[directoryUrl].length === 0) {
-        return 'no-nonces-run-new-nonce';
-    }
-    const entry = noncePools[directoryUrl].pop();
-    updateNonceStorage(directoryUrl);
-    return typeof entry === 'string' ? entry : entry.nonce;
-}
-
-function updateNonceStorage(directoryUrl) {
-    const pool = noncePools[directoryUrl] || [];
-    setObject(`${directoryUrl}/nonces`, `Nonce Pool (${pool.length})`, 'nonces', directoryUrl, {nonces: pool});
+    if (!directoryUrl) return 'no-nonces-run-new-nonce';
+    const n = getNoncePool(env, directoryUrl).take();
     renderTreeview();
+    return n;
 }
 
 function getDirectoryUrl(url) {
