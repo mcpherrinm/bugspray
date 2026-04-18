@@ -300,6 +300,8 @@ textarea {
     gap: 0.5rem;
 }
 
+.nonceMissing[hidden] { display: none; }
+
 .nonceMissing button {
     padding: 0.2rem 0.6rem;
     font-size: 0.8rem;
