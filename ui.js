@@ -1,6 +1,31 @@
 import {clearStorage, getObject, listObjects, setObject} from "./storage.js";
-import {newKey, protect, sign, thumbprint} from "./jws.js";
+import {getOrCreateKey, protect, sign, thumbprint} from "./jws.js";
 import {renderTreeview, setSelectedUrl} from "./nav.js";
+
+const subtle = window.crypto.subtle;
+
+/** @type {import("./jws.js").KeyStore} */
+const browserKeyStore = {
+    async get(name) {
+        const stored = window.localStorage.getItem(`bugspray|key|${name}`);
+        if (stored === null) return null;
+        const data = JSON.parse(stored);
+        const privateKey = await subtle.importKey(
+            "jwk", data.private, {name: "ECDSA", namedCurve: "P-256"}, true, ['sign']);
+        const publicKey = await subtle.importKey(
+            "jwk", data.public, {name: "ECDSA", namedCurve: "P-256"}, true, ['verify']);
+        return {privateKey, publicKey};
+    },
+    async put(name, pair) {
+        const data = JSON.stringify({
+            private: await subtle.exportKey("jwk", pair.privateKey),
+            public: await subtle.exportKey("jwk", pair.publicKey),
+        });
+        window.localStorage.setItem(`bugspray|key|${name}`, data);
+    },
+};
+
+const newKey = (/** @type {string} */ name) => getOrCreateKey(browserKeyStore, subtle, name);
 
 export function setup() {
     for (const [url, object] of listObjects()) {
@@ -379,7 +404,7 @@ async function renderChallenge(url, object) {
         challDiv.appendChild(copiable(`${caDomain}; accounturi=${accountUri}`));
     } else if (object.key && ch.token) {
         const key = await newKey(object.key);
-        const thumb = await thumbprint(key);
+        const thumb = await thumbprint(subtle, key);
         const keyAuthz = `${ch.token}.${thumb}`;
 
         let instructionsH2 = element('h2', 'Instructions');
@@ -946,12 +971,12 @@ async function poster(data) {
     let prot = element('textarea', '');
     prot.id = 'protected';
     let key = await newKey(data.key);
-    let protectedData = await protect(key, data.kid, data.nonce, data.url);
+    let protectedData = await protect(subtle, key, data.kid, data.nonce, data.url);
     prot.value = JSON.stringify(protectedData, null, 2);
     f.appendChild(div(label('protected', 'Protected Data'), prot));
 
     // TODO: we want to re-sign if the data is changed. Automatically, or maybe manually
-    let signedData = await sign(key, protectedData, data.msg);
+    let signedData = await sign(subtle, key, protectedData, data.msg);
 
     let signed = element('textarea', '');
     signed.value = signedData;

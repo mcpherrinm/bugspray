@@ -1,3 +1,19 @@
+/**
+ * @typedef {Object} KeyStore
+ * @property {(name: string) => Promise<CryptoKeyPair | null>} get
+ * @property {(name: string, pair: CryptoKeyPair) => Promise<void>} put
+ */
+
+/**
+ * @typedef {Object} JwsProtected
+ * @property {string} nonce
+ * @property {string} url
+ * @property {string} alg
+ * @property {string} [kid]
+ * @property {object} [jwk]
+ */
+
+/** @param {string} string */
 function b64(string) {
     return btoa(string)
         .replace(/\+/g, '-')
@@ -5,6 +21,7 @@ function b64(string) {
         .replace(/=+$/, '');
 }
 
+/** @param {ArrayBuffer | Uint8Array} array */
 function b64array(array) {
     let asString = '';
     const bytes = new Uint8Array(array);
@@ -16,104 +33,85 @@ function b64array(array) {
     return b64(asString);
 }
 
-// newKey returns a key identified by `name`. If it doesn't exist already, it is created
-async function newKey(name) {
-    const stored = window.localStorage.getItem(`bugspray|key|${name}`);
+/**
+ * Returns a key identified by `name`. If it doesn't exist already, it is created and saved.
+ * @param {KeyStore} keyStore
+ * @param {SubtleCrypto} subtle
+ * @param {string} name
+ * @returns {Promise<CryptoKeyPair>}
+ */
+async function getOrCreateKey(keyStore, subtle, name) {
+    const existing = await keyStore.get(name);
+    if (existing !== null) {
+        return existing;
+    }
 
-    if (stored !== null) {
-        const data = JSON.parse(stored);
-        const privateKey = await window.crypto.subtle.importKey(
-            "jwk",
-            data.private,
-            {
-                name: "ECDSA",
-                namedCurve: "P-256"
-            },
-            true,
-            ['sign']);
-        const publicKey = await window.crypto.subtle.importKey(
-            "jwk",
-            data.public,
-            {
-                name: "ECDSA",
-                namedCurve: "P-256"
-            },
-            true,
-            ['verify']);
-
-        // @ts-ignore — pre-existing oddity, rewritten in jws.js refactor
-        let loadedKey = window.crypto.subtle.CryptoKeyPair = {
-            privateKey: privateKey,
-            publicKey: publicKey
-        }
-        console.log("Loaded private key", loadedKey);
-        return loadedKey
-   }
-
-    console.log(`No key stored for ${name}, generating`)
-
-    const newKey = await window.crypto.subtle.generateKey(
-        {
-            name: "ECDSA",
-            namedCurve: "P-256"
-        },
+    const newPair = await subtle.generateKey(
+        {name: "ECDSA", namedCurve: "P-256"},
         true,
         ['sign', 'verify']
-    )
+    );
 
-    const privateKey= JSON.stringify({
-        private: await window.crypto.subtle.exportKey("jwk", newKey.privateKey),
-        public: await window.crypto.subtle.exportKey("jwk", newKey.publicKey),
-    });
-    console.log("New key", newKey);
-    console.log("Exporting private key", privateKey);
-    window.localStorage.setItem(`bugspray|key|${name}`, privateKey);
-
-    console.log("New key", newKey);
-    return newKey
+    await keyStore.put(name, newPair);
+    return newPair;
 }
 
-// Create the protected part of a JWS
-// If kid is null, a jwk field will be added, which should happen for newAccount and certificate-key revokeCert
-async function protect(key, kid, nonce, url) {
-    let prot= {
+/**
+ * Build the protected part of a JWS.
+ * If kid is null, a jwk field will be added (used for newAccount and certificate-key revokeCert).
+ * @param {SubtleCrypto} subtle
+ * @param {CryptoKeyPair} key
+ * @param {string | null} kid
+ * @param {string} nonce
+ * @param {string} url
+ * @returns {Promise<JwsProtected>}
+ */
+async function protect(subtle, key, kid, nonce, url) {
+    /** @type {JwsProtected} */
+    const prot = {
         nonce: nonce,
         url: url,
         alg: "ES256",
-    }
+    };
 
     if (kid === null) {
-        const jwk = await window.crypto.subtle.exportKey("jwk", key.publicKey);
-        prot["jwk"] = {
+        const jwk = await subtle.exportKey("jwk", key.publicKey);
+        prot.jwk = {
             kty: jwk.kty,
             crv: jwk.crv,
             x: jwk.x,
             y: jwk.y,
-        }
+        };
     } else {
-        prot["kid"] = kid;
+        prot.kid = kid;
     }
 
-    return prot
+    return prot;
 }
 
-// Compute a signature for ACME
-// prot should come from `protect`.
-// Payload should be an object that will be JSON-encoded, or an empty string for an empty payload (POST-as-GET)
-async function sign(key, prot, payload) {
+/**
+ * Compute a JWS for ACME.
+ * payload is an object that will be JSON-encoded, or "" for an empty payload (POST-as-GET).
+ * @param {SubtleCrypto} subtle
+ * @param {CryptoKeyPair} key
+ * @param {JwsProtected} prot
+ * @param {object | string} payload
+ * @returns {Promise<string>}
+ */
+async function sign(subtle, key, prot, payload) {
     const encodedProtected = b64(JSON.stringify(prot));
     let encodedPayload;
     if (payload === "") {
-        encodedPayload = ""
+        encodedPayload = "";
     } else {
         encodedPayload = b64(JSON.stringify(payload));
     }
 
-    const sig = await window.crypto.subtle.sign(
+    const sig = await subtle.sign(
         {name: "ECDSA", hash: {name: "SHA-256"}},
         key.privateKey,
         new TextEncoder().encode(encodedProtected + "." + encodedPayload)
-    )
+    );
 
     return JSON.stringify({
         "protected": encodedProtected,
@@ -122,11 +120,16 @@ async function sign(key, prot, payload) {
     }, null, 2);
 }
 
-async function thumbprint(key) {
-    const jwk = await window.crypto.subtle.exportKey("jwk", key.publicKey);
+/**
+ * @param {SubtleCrypto} subtle
+ * @param {CryptoKeyPair} key
+ * @returns {Promise<string>}
+ */
+async function thumbprint(subtle, key) {
+    const jwk = await subtle.exportKey("jwk", key.publicKey);
     const input = JSON.stringify({crv: jwk.crv, kty: jwk.kty, x: jwk.x, y: jwk.y});
-    const hash = await window.crypto.subtle.digest("SHA-256", new TextEncoder().encode(input));
+    const hash = await subtle.digest("SHA-256", new TextEncoder().encode(input));
     return b64array(hash);
 }
 
-export {newKey, protect, sign, thumbprint};
+export {getOrCreateKey, protect, sign, thumbprint};
