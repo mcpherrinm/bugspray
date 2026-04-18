@@ -3,7 +3,7 @@ import {renderTreeview, setSelectedUrl} from "./nav.js";
 import {buildBrowserEnv} from "./browserEnv.js";
 import {
     getNoncePool, resetNoncePools, fromStored,
-    AcmeDirectory, AcmeOrder, AcmeChallenge,
+    AcmeDirectory, AcmeOrder, AcmeChallenge, AcmeCertificate,
     buildSigned, submitSigned,
 } from "./acme.js";
 
@@ -259,6 +259,55 @@ async function renderChallenge(ch) {
     return d;
 }
 
+/**
+ * Certificate-specific body: PEM textarea (not synthetic JSON) plus any
+ * alternate chain URLs advertised via RFC 8555 §7.4.2 Link headers.
+ * @param {AcmeCertificate} cert
+ */
+function renderCertificateBody(cert) {
+    const d = div();
+
+    d.appendChild(element('h2', 'PEM'));
+    const pemArea = document.createElement('textarea');
+    pemArea.className = 'rawObject';
+    pemArea.value = cert.resource?.pem ?? '';
+    d.appendChild(pemArea);
+
+    const alts = cert.alternateLinks();
+    if (alts.length > 0) {
+        d.appendChild(element('h2', 'Alternate Chains'));
+        const list = document.createElement('ul');
+        for (const altUrl of alts) {
+            const li = document.createElement('li');
+            const btn = element('button', altUrl);
+            btn.onclick = () => openAlternateChain(cert, altUrl);
+            li.appendChild(btn);
+            list.appendChild(li);
+        }
+        d.appendChild(list);
+    }
+
+    return d;
+}
+
+/**
+ * Navigate to an alternate-chain URL, creating a stub certificate object
+ * parented to the same order if it doesn't exist yet. The user can then click
+ * Reload to POST-as-GET the alternate chain.
+ * @param {AcmeCertificate} cert
+ * @param {string} altUrl
+ */
+function openAlternateChain(cert, altUrl) {
+    if (!env.objectStore.get(altUrl)) {
+        env.objectStore.put({
+            url: altUrl, type: 'certificate', name: 'alternate',
+            parent: cert.parent, resource: null, key: cert.keyName,
+        });
+        renderTreeview();
+    }
+    viewObject(altUrl);
+}
+
 function renderNonces(url, object) {
     const directoryUrl = object.parent;
     const pool = getNoncePool(env, directoryUrl);
@@ -331,12 +380,18 @@ export async function renderObject(url, object) {
         resource = renderGeneric(obj);
     }
 
-    let rawH2 = element('h2', 'Resource JSON');
-    let raw = document.createElement('textarea')
-    raw.className = 'rawObject';
-    raw.value = JSON.stringify(object.resource, null, 2);
+    let rawBlock;
+    if (obj instanceof AcmeCertificate) {
+        rawBlock = renderCertificateBody(obj);
+    } else {
+        const rawH2 = element('h2', 'Resource JSON');
+        const raw = document.createElement('textarea');
+        raw.className = 'rawObject';
+        raw.value = JSON.stringify(object.resource, null, 2);
+        rawBlock = div(rawH2, raw);
+    }
 
-    document.getElementById('poker').replaceChildren(h1, div(resourceURL, reloadRow), resource, div(rawH2, raw));
+    document.getElementById('poker').replaceChildren(h1, div(resourceURL, reloadRow), resource, rawBlock);
 
     showLastExchangeForObject(url);
 }

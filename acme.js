@@ -674,6 +674,42 @@ export function splitPemChain(pem) {
     return matches ? matches : [];
 }
 
+/**
+ * @typedef {Object} LinkHeader
+ * @property {string} url
+ * @property {Record<string, string>} params
+ */
+
+/**
+ * Parse a set of HTTP response headers (as stored in HttpResponseRecord) into
+ * RFC 8288 Link entries. Handles multiple Link-header rows and comma-separated
+ * values within one row. Unrecognized entries are silently skipped.
+ * @param {Array<[string, string]>} headers
+ * @returns {LinkHeader[]}
+ */
+export function parseLinkHeaders(headers) {
+    /** @type {LinkHeader[]} */
+    const out = [];
+    for (const [name, value] of headers) {
+        if (name.toLowerCase() !== 'link') continue;
+        // Split on commas that precede a `<…>` target, so commas inside quoted
+        // params stay with their entry.
+        const parts = value.split(/,(?=\s*<)/);
+        for (const part of parts) {
+            const m = part.match(/<([^>]+)>\s*(.*)/);
+            if (!m) continue;
+            /** @type {Record<string, string>} */
+            const params = {};
+            const pm = m[2].matchAll(/;\s*([a-zA-Z][a-zA-Z0-9_-]*)\s*=\s*(?:"([^"]*)"|([^;\s]*))/g);
+            for (const match of pm) {
+                params[match[1].toLowerCase()] = match[2] !== undefined ? match[2] : match[3];
+            }
+            out.push({url: m[1], params});
+        }
+    }
+    return out;
+}
+
 /** ACME certificate (RFC 8555 §7.4.2). Wire format is application/pem-certificate-chain. */
 export class AcmeCertificate extends AcmeObject {
     /**
@@ -690,6 +726,20 @@ export class AcmeCertificate extends AcmeObject {
         const fields = [];
         if (Array.isArray(r.chain)) fields.push(['chain length', String(r.chain.length)]);
         return fields;
+    }
+
+    /**
+     * Alternate-chain URLs from the last fetch's Link: rel="alternate" headers
+     * (RFC 8555 §7.4.2). Empty if the cert hasn't been fetched or the server
+     * advertised no alternates.
+     * @returns {string[]}
+     */
+    alternateLinks() {
+        const headers = this.stored.lastResponse?.headers;
+        if (!headers) return [];
+        return parseLinkHeaders(headers)
+            .filter(l => l.params.rel === 'alternate')
+            .map(l => l.url);
     }
 }
 

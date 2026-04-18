@@ -2,7 +2,7 @@ import {test, expect, describe} from "bun:test";
 import {
     NoncePool, NO_NONCE_SENTINEL, nonceStorageUrl, getNoncePool, resetNoncePools,
     AcmeObject, AcmeDirectory, AcmeAccount, AcmeOrder, AcmeAuthorization,
-    AcmeChallenge, AcmeCertificate, fromStored, splitPemChain,
+    AcmeChallenge, AcmeCertificate, fromStored, splitPemChain, parseLinkHeaders,
 } from "./acme.js";
 import {protect} from "./jws.js";
 
@@ -183,6 +183,50 @@ describe("AcmeCertificate", () => {
 
     test("splitPemChain returns [] when no markers", () => {
         expect(splitPemChain("garbage")).toEqual([]);
+    });
+
+    test("alternateLinks parses Link: rel=alternate from stored response headers", () => {
+        const env = fakeEnv();
+        env.objectStore.put({
+            url: "https://ca/cert/1", type: "certificate", name: "", parent: "https://ca/order/1",
+            resource: {pem: "", chain: []},
+            lastResponse: {
+                status: 200, statusText: "OK", body: "", contentType: null,
+                headers: [
+                    ["content-type", "application/pem-certificate-chain"],
+                    ["link", "<https://ca/acme/directory>;rel=\"index\""],
+                    ["link", "<https://ca/acme/cert/1/alt/1>;rel=\"alternate\""],
+                    ["link", "<https://ca/acme/cert/1/alt/2>;rel=\"alternate\", <https://ca/acme/cert/1/alt/3>;rel=\"alternate\""],
+                ],
+            },
+        });
+        const cert = /** @type {AcmeCertificate} */ (fromStored(env.objectStore.get("https://ca/cert/1"), env));
+        expect(cert.alternateLinks()).toEqual([
+            "https://ca/acme/cert/1/alt/1",
+            "https://ca/acme/cert/1/alt/2",
+            "https://ca/acme/cert/1/alt/3",
+        ]);
+    });
+
+    test("alternateLinks is empty when no lastResponse recorded", () => {
+        const env = fakeEnv();
+        env.objectStore.put({
+            url: "https://ca/cert/1", type: "certificate", name: "", parent: "https://ca/order/1",
+            resource: null,
+        });
+        const cert = /** @type {AcmeCertificate} */ (fromStored(env.objectStore.get("https://ca/cert/1"), env));
+        expect(cert.alternateLinks()).toEqual([]);
+    });
+
+    test("parseLinkHeaders handles unquoted params and comma-separated values", () => {
+        const links = parseLinkHeaders([
+            ["Link", "<https://x/a>; rel=alternate"],
+            ["link", "<https://x/b>;rel=\"up\""],
+        ]);
+        expect(links).toEqual([
+            {url: "https://x/a", params: {rel: "alternate"}},
+            {url: "https://x/b", params: {rel: "up"}},
+        ]);
     });
 
     test("fromStored migrates legacy {value, contentType} to {pem, chain}", () => {
