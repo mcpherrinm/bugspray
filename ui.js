@@ -1,12 +1,9 @@
-import {clearStorage, getObject, listObjects, setObject} from "./storage.js";
-import {getOrCreateKey, thumbprint} from "./jws.js";
+import {clearStorage, getObject, listObjects} from "./storage.js";
 import {renderTreeview, setSelectedUrl} from "./nav.js";
 import {buildBrowserEnv} from "./browserEnv.js";
-import {getNoncePool, resetNoncePools, fromStored, AcmeDirectory, postSigned} from "./acme.js";
+import {getNoncePool, resetNoncePools, fromStored, AcmeDirectory, AcmeOrder, AcmeChallenge} from "./acme.js";
 
 const env = buildBrowserEnv();
-const subtle = env.subtle;
-const newKey = (/** @type {string} */ name) => getOrCreateKey(env.keyStore, subtle, name);
 
 export function setup() {
     // NoncePool.load is lazy; touching each directory's pool here primes the
@@ -212,227 +209,83 @@ function renderDirectory(url, directory) {
     return dirDiv;
 }
 
-function renderAccount(url, object) {
-    let accountDiv = div();
-
-    const expectedFields = ['status', 'contact', 'termsOfServiceAgreed', 'orders'];
-    for (const field of expectedFields) {
-        if (object.resource[field] !== undefined) {
-            let value = object.resource[field];
-            if (field === 'contact' && Array.isArray(value)) {
-                value = value.join(', ');
-            }
-            accountDiv.appendChild(element('p', `${field}: ${value}`));
+/**
+ * Generic renderer driven by AcmeObject methods. Used for account, order,
+ * authorization, certificate. Directory and challenge have specialized renderers.
+ * @param {import("./acme.js").AcmeObject} obj
+ */
+function renderGeneric(obj) {
+    const d = div();
+    for (const [k, v] of obj.displayFields()) {
+        d.appendChild(element('p', `${k}: ${v}`));
+    }
+    const kids = obj.children();
+    if (kids.length > 0) {
+        d.appendChild(element('h2', 'Children'));
+        const list = document.createElement('ul');
+        for (const ch of kids) {
+            const li = document.createElement('li');
+            const btn = element('button', `${ch.label} - ${ch.url}`);
+            btn.onclick = () => viewObject(ch.url);
+            li.appendChild(btn);
+            list.appendChild(li);
         }
+        d.appendChild(list);
     }
-
-    let unknownDiv = div(element('h2', 'Unknown Account Entries'));
-    let unknown = false;
-    for (const [key, value] of Object.entries(object.resource)) {
-        if (expectedFields.includes(key)) {
-            continue;
+    const methods = obj.methodNames();
+    if (methods.length > 0) {
+        const methodsDiv = div(element('h2', 'Methods'));
+        const row = div();
+        row.className = 'row';
+        for (const m of methods) {
+            const btn = element('button', m);
+            btn.className = 'method';
+            btn.onclick = () => dispatchObjectMethod(obj, m);
+            row.appendChild(btn);
         }
-        unknownDiv.appendChild(element('p', `${key}: ${JSON.stringify(value)}`));
-        unknown = true;
+        methodsDiv.appendChild(row);
+        d.appendChild(methodsDiv);
     }
-    if (unknown) {
-        accountDiv.appendChild(unknownDiv);
-    }
-
-    const directoryUrl = getDirectoryUrl(url);
-    const directory = getObject(directoryUrl);
-    if (directory) {
-        let methodsHeader = element('h2', 'Methods');
-        let methodsDiv = div(methodsHeader);
-        const rows = [['newNonce', 'newOrder', 'newAuthz'], ['revokeCert', 'keyChange']];
-        for (const row of rows) {
-            const rowDiv = div();
-            rowDiv.className = 'row';
-            for (const method of row) {
-                rowDiv.appendChild(renderMethod(method, directory, {kid: url, key: object.key}));
-            }
-            methodsDiv.appendChild(rowDiv);
-        }
-        accountDiv.appendChild(methodsDiv);
-    }
-
-    return accountDiv;
+    return d;
 }
 
-function renderOrder(url, object) {
-    let orderDiv = div();
-
-    const expectedFields = ['status', 'expires', 'identifiers', 'authorizations', 'finalize', 'certificate', 'error'];
-    for (const field of expectedFields) {
-        if (object.resource[field] !== undefined) {
-            let value = object.resource[field];
-            if (field === 'identifiers' && Array.isArray(value)) {
-                value = value.map(i => `${i.type}:${i.value}`).join(', ');
-            }
-            if (field === 'authorizations' && Array.isArray(value)) {
-                value = `${value.length} authorizations`;
-            }
-            if (field === 'error') {
-                value = JSON.stringify(value);
-            }
-            orderDiv.appendChild(element('p', `${field}: ${value}`));
+/**
+ * @param {import("./acme.js").AcmeObject} obj
+ * @param {string} method
+ */
+function dispatchObjectMethod(obj, method) {
+    if (obj.type === 'account') {
+        const directoryStored = getObject(obj.directoryUrl);
+        if (directoryStored) {
+            runMethod(method, directoryStored, {kid: obj.url, key: obj.keyName});
         }
+        return;
     }
-
-    let authzH2 = element('h2', 'Authorizations');
-    let authzList = document.createElement('ul');
-    for (const authzUrl of object.resource.authorizations) {
-        let li = document.createElement('li');
-        let viewBtn = element('button', authzUrl);
-        viewBtn.onclick = () => viewObject(authzUrl);
-        li.appendChild(viewBtn);
-        authzList.appendChild(li);
+    if (obj instanceof AcmeOrder && method === 'finalize') {
+        runFinalizeOrder(obj.url, obj.stored);
+        return;
     }
-    orderDiv.appendChild(div(authzH2, authzList));
-
-    if (object.resource.finalize) {
-        let methodsDiv = div(element('h2', 'Methods'));
-        let rowDiv = div();
-        rowDiv.className = 'row';
-        let finalizeBtn = element('button', 'finalize');
-        finalizeBtn.className = 'method';
-        finalizeBtn.onclick = () => runFinalizeOrder(url, object);
-        rowDiv.appendChild(finalizeBtn);
-        methodsDiv.appendChild(rowDiv);
-        orderDiv.appendChild(methodsDiv);
+    if (obj instanceof AcmeChallenge && method === 'respond') {
+        postWithPreview((confirm) => obj.respond({confirm})).then(renderTreeview);
+        return;
     }
-
-    return orderDiv;
 }
 
-function renderAuthorization(url, object) {
-    let authzDiv = div();
-
-    const expectedFields = ['status', 'identifier', 'challenges', 'expires', 'wildcard', 'error'];
-    for (const field of expectedFields) {
-        if (object.resource[field] !== undefined) {
-            let value = object.resource[field];
-            if (field === 'identifier') {
-                value = `${value.type} ${value.value}`;
-            }
-            if (field === 'challenges' && Array.isArray(value)) {
-                value = `${value.length} challenges`;
-            }
-            if (field === 'error') {
-                value = JSON.stringify(value);
-            }
-            authzDiv.appendChild(element('p', `${field}: ${value}`));
+/**
+ * Renders a challenge: generic header + per-type instructions panel.
+ * @param {AcmeChallenge} ch
+ */
+async function renderChallenge(ch) {
+    const d = renderGeneric(ch);
+    const items = await ch.instructions();
+    if (items.length > 0) {
+        d.appendChild(element('h2', 'Instructions'));
+        for (const item of items) {
+            if (item.text !== undefined) d.appendChild(element('p', item.text));
+            if (item.copiable !== undefined) d.appendChild(copiable(item.copiable));
         }
     }
-
-    let chH2 = element('h2', 'Challenges');
-    let chList = document.createElement('ul');
-    for (const ch of object.resource.challenges) {
-        let li = document.createElement('li');
-        li.innerText = `${ch.type} - ${ch.status} `;
-        // TODO: render challenge details and "Respond" button
-        chList.appendChild(li);
-    }
-    authzDiv.appendChild(div(chH2, chList));
-
-    return authzDiv;
-}
-
-async function renderChallenge(url, object) {
-    let challDiv = div();
-
-    const ch = object.resource;
-    challDiv.appendChild(element('p', `type: ${ch.type}`));
-    challDiv.appendChild(element('p', `status: ${ch.status}`));
-    challDiv.appendChild(element('p', `token: ${ch.token}`));
-
-    if (ch.error) {
-        challDiv.appendChild(element('p', `error: ${JSON.stringify(ch.error)}`));
-    }
-
-    // Compute challenge-specific instructions
-    const authz = getObject(object.parent);
-    const domain = authz?.resource?.identifier?.value || '<domain>';
-
-    if (ch.type === 'dns-persist-01') {
-        // dns-persist-01: RFC draft-ietf-acme-dns-persist
-        // A static TXT record at _validation-persist.{domain} that persists across renewals.
-        // Format: {ca-caa-domain}; accounturi={account-uri}
-
-        // Walk up the parent chain to find the account URI: challenge -> authz -> order -> account
-        let accountUri = '<account-uri>';
-        if (authz) {
-            const orderObj = getObject(authz.parent);
-            if (orderObj?.type === 'account') {
-                accountUri = authz.parent;
-            } else if (orderObj) {
-                accountUri = orderObj.parent || '<account-uri>';
-            }
-        }
-
-        // Get the CA's CAA authorization domain from directory metadata
-        const directoryUrl = getDirectoryUrl(object.parent);
-        const directory = getObject(directoryUrl);
-        const caaIdentities = directory?.resource?.meta?.caaIdentities;
-        const caDomain = (caaIdentities && caaIdentities.length > 0) ? caaIdentities[0] : '<ca-caa-domain>';
-
-        let instructionsH2 = element('h2', 'Instructions');
-        challDiv.appendChild(instructionsH2);
-        challDiv.appendChild(element('p', 'Create a persistent TXT record (does not need to change between renewals):'));
-        challDiv.appendChild(copiable(`_validation-persist.${domain}`));
-        challDiv.appendChild(element('p', 'Value:'));
-        challDiv.appendChild(copiable(`${caDomain}; accounturi=${accountUri}`));
-    } else if (object.key && ch.token) {
-        const key = await newKey(object.key);
-        const thumb = await thumbprint(subtle, key);
-        const keyAuthz = `${ch.token}.${thumb}`;
-
-        let instructionsH2 = element('h2', 'Instructions');
-        challDiv.appendChild(instructionsH2);
-
-        if (ch.type === 'http-01') {
-            challDiv.appendChild(element('p', `Serve the following at:`));
-            challDiv.appendChild(copiable(`http://${domain}/.well-known/acme-challenge/${ch.token}`));
-            challDiv.appendChild(element('p', 'Content:'));
-            challDiv.appendChild(copiable(keyAuthz));
-        } else if (ch.type === 'dns-01' || ch.type === 'dns-account-01') {
-            const digest = await window.crypto.subtle.digest("SHA-256", new TextEncoder().encode(keyAuthz));
-            const bytes = new Uint8Array(digest);
-            const b64Val = btoa(String.fromCharCode(...bytes))
-                .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-            challDiv.appendChild(element('p', `Create a TXT record:`));
-            challDiv.appendChild(copiable(`_acme-challenge.${domain}`));
-            challDiv.appendChild(element('p', 'Value:'));
-            challDiv.appendChild(copiable(b64Val));
-        } else if (ch.type === 'tls-alpn-01') {
-            const digest = await window.crypto.subtle.digest("SHA-256", new TextEncoder().encode(keyAuthz));
-            const bytes = new Uint8Array(digest);
-            const hexVal = Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
-            challDiv.appendChild(element('p', 'Serve a TLS connection on port 443 with ALPN protocol "acme-tls/1". The certificate must have:'));
-            challDiv.appendChild(element('p', 'Subject Alternative Name (dNSName):'));
-            challDiv.appendChild(copiable(domain));
-            challDiv.appendChild(element('p', 'A critical ACME extension (OID 1.3.6.1.5.5.7.1.31) containing an ASN.1 DER-encoded OctetString of the SHA-256 digest of the key authorization:'));
-            challDiv.appendChild(copiable(hexVal));
-        } else {
-            challDiv.appendChild(element('p', 'Key Authorization:'));
-            challDiv.appendChild(copiable(keyAuthz));
-        }
-    }
-
-    let respondBtn = goButton('respond-challenge', 'Respond to Challenge', async () => {
-        const kid = findAccountUrl(url);
-        await postWithPreview((confirm) => postSigned({
-            env, url, key: object.key, kid, payload: {},
-            type: object.type, parent: object.parent, confirm,
-        }));
-    });
-    challDiv.appendChild(respondBtn);
-
-    return challDiv;
-}
-
-function renderCertificate(url, object) {
-    return "TODO: cert";
+    return d;
 }
 
 function renderNonces(url, object) {
@@ -481,12 +334,8 @@ export async function renderObject(url, object) {
 
     let reloadBtn = element('button', 'Reload');
     reloadBtn.onclick = async () => {
-        const kid = findAccountUrl(url);
-        await postWithPreview((confirm) => postSigned({
-            env, url, key: object.key, kid, payload: "",
-            type: object.type, parent: object.parent, confirm,
-            postProcess: postProcessForType(object.type, object.key),
-        }));
+        const obj = fromStored(object, env);
+        await postWithPreview((confirm) => obj.reload({confirm}));
     };
 
     if (!object.resource) {
@@ -496,28 +345,18 @@ export async function renderObject(url, object) {
     }
 
     let resource;
-    switch (object.type) {
-        case 'directory':
-            resource = renderDirectory(url, object);
-            break;
-        case 'account':
-            resource = renderAccount(url, object);
-            break;
-        case 'order':
-            resource = renderOrder(url, object);
-            break;
-        case 'authorization':
-            resource = renderAuthorization(url, object);
-            break;
-        case 'challenge':
-            resource = await renderChallenge(url, object);
-            break;
-        case 'certificate':
-            resource = renderCertificate(url, object);
-            break;
-        case 'nonces':
-            document.getElementById('poker').replaceChildren(renderNonces(url, object));
-            return;
+    if (object.type === 'directory') {
+        resource = renderDirectory(url, object);
+    } else if (object.type === 'nonces') {
+        document.getElementById('poker').replaceChildren(renderNonces(url, object));
+        return;
+    } else {
+        const obj = fromStored(object, env);
+        if (obj instanceof AcmeChallenge) {
+            resource = await renderChallenge(obj);
+        } else {
+            resource = renderGeneric(obj);
+        }
     }
 
     let rawH2 = element('h2', 'Resource JSON');
@@ -526,72 +365,6 @@ export async function renderObject(url, object) {
     raw.value = JSON.stringify(object.resource, null, 2);
 
     document.getElementById('poker').replaceChildren(h1, div(resourceURL, reloadBtn), resource, div(rawH2, raw));
-}
-
-function gotNonce(headers, directoryUrl) {
-    if (!directoryUrl) return;
-    getNoncePool(env, directoryUrl).captureFromHeaders(headers);
-    renderTreeview();
-}
-
-function getNonce(directoryUrl) {
-    if (!directoryUrl) return 'no-nonces-run-new-nonce';
-    const n = getNoncePool(env, directoryUrl).take();
-    renderTreeview();
-    return n;
-}
-
-function getDirectoryUrl(url) {
-    let obj = getObject(url);
-    while (obj && obj.type !== 'directory') {
-        url = obj.parent;
-        obj = getObject(url);
-    }
-    return obj ? obj.url : null;
-}
-
-/** Walk parent chain to find the owning account URL. */
-function findAccountUrl(url) {
-    let obj = getObject(url);
-    let here = url;
-    while (obj && obj.type !== 'account') {
-        here = obj.parent;
-        obj = getObject(here);
-    }
-    return obj ? obj.url : here;
-}
-
-/**
- * Per-type post-processing for reload responses: stitch child resources into
- * the object store so they appear in the treeview. Moves to AcmeObject
- * subclasses in step 7.
- * @param {string} type
- * @param {string | undefined} keyName
- */
-function postProcessForType(type, keyName) {
-    if (type === 'authorization') {
-        return (resource, targetUrl) => {
-            if (!resource || !Array.isArray(resource.challenges)) return;
-            for (const ch of resource.challenges) {
-                if (env.objectStore.get(ch.url)) continue;
-                env.objectStore.put({
-                    url: ch.url, type: 'challenge', name: '',
-                    parent: targetUrl, resource: null, key: keyName,
-                });
-            }
-        };
-    }
-    if (type === 'order') {
-        return (resource, targetUrl) => {
-            if (resource && resource.certificate && !env.objectStore.get(resource.certificate)) {
-                env.objectStore.put({
-                    url: resource.certificate, type: 'certificate', name: '',
-                    parent: targetUrl, resource: null, key: keyName,
-                });
-            }
-        };
-    }
-    return undefined;
 }
 
 function goButton(id, label, onClick) {
@@ -622,10 +395,10 @@ function newDirectory() {
 
         console.log(`Getting directory url ${url}`)
         try {
-            const resp = await fetch(url);
-            gotNonce(resp.headers, url);
+            const resp = await env.fetch(url);
+            getNoncePool(env, url).captureFromHeaders(resp.headers);
             const directory = await resp.json();
-            setObject(url, name.value, 'directory', '', directory);
+            env.objectStore.put({url, name: name.value, type: 'directory', parent: '', resource: directory});
         } catch (e) {
             console.log(`Failed to fetch directory ${url}: ${e}`);
             let err = document.createElement('p');
@@ -805,33 +578,10 @@ function runFinalizeOrder(url, object) {
     csrInput.className = 'rawObject';
     f.appendChild(div(label('csr-input', 'CSR (PEM or Base64url-encoded DER):'), csrInput));
 
-    const directoryUrl = getDirectoryUrl(url);
     const go = goButton('go-run-method', 'Run finalize', async () => {
-        // Convert PEM to base64url DER if needed
-        let csrValue = csrInput.value.trim();
-        if (csrValue.startsWith('-----BEGIN')) {
-            csrValue = csrValue
-                .replace(/-----BEGIN CERTIFICATE REQUEST-----/g, '')
-                .replace(/-----END CERTIFICATE REQUEST-----/g, '')
-                .replace(/\s+/g, '');
-            // Standard base64 to base64url
-            csrValue = csrValue
-                .replace(/\+/g, '-')
-                .replace(/\//g, '_')
-                .replace(/=+$/g, '');
-        }
-
-        await postWithPreview((confirm) => postSigned({
-            env,
-            url: object.resource.finalize,
-            key: keyInput.value,
-            kid: kidInput.value,
-            payload: {csr: csrValue},
-            type: 'order',
-            parent: object.parent,
-            confirm,
-            postProcess: postProcessForType('order', keyInput.value),
-        }));
+        const stored = {...object, key: keyInput.value};
+        const order = new AcmeOrder(stored, env);
+        await postWithPreview((confirm) => order.finalize(csrInput.value, {confirm}));
     });
 
     document.getElementById('poker').replaceChildren(h1, f, go);
