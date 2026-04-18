@@ -1,31 +1,11 @@
 import {clearStorage, getObject, listObjects, setObject} from "./storage.js";
 import {getOrCreateKey, protect, sign, thumbprint} from "./jws.js";
 import {renderTreeview, setSelectedUrl} from "./nav.js";
+import {buildBrowserEnv} from "./browserEnv.js";
 
-const subtle = window.crypto.subtle;
-
-/** @type {import("./jws.js").KeyStore} */
-const browserKeyStore = {
-    async get(name) {
-        const stored = window.localStorage.getItem(`bugspray|key|${name}`);
-        if (stored === null) return null;
-        const data = JSON.parse(stored);
-        const privateKey = await subtle.importKey(
-            "jwk", data.private, {name: "ECDSA", namedCurve: "P-256"}, true, ['sign']);
-        const publicKey = await subtle.importKey(
-            "jwk", data.public, {name: "ECDSA", namedCurve: "P-256"}, true, ['verify']);
-        return {privateKey, publicKey};
-    },
-    async put(name, pair) {
-        const data = JSON.stringify({
-            private: await subtle.exportKey("jwk", pair.privateKey),
-            public: await subtle.exportKey("jwk", pair.publicKey),
-        });
-        window.localStorage.setItem(`bugspray|key|${name}`, data);
-    },
-};
-
-const newKey = (/** @type {string} */ name) => getOrCreateKey(browserKeyStore, subtle, name);
+const env = buildBrowserEnv();
+const subtle = env.subtle;
+const newKey = (/** @type {string} */ name) => getOrCreateKey(env.keyStore, subtle, name);
 
 export function setup() {
     for (const [url, object] of listObjects()) {
