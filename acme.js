@@ -638,6 +638,33 @@ async function sha256hex(subtle, input) {
  * top-level operations and is the entry point for newAccount/newOrder/etc.
  */
 export class AcmeDirectory extends AcmeObject {
+    displayFields() {
+        /** @type {Array<[string, string]>} */
+        const fields = [];
+        const meta = this.resource?.meta || {};
+        for (const [k, v] of Object.entries(meta)) {
+            fields.push([k, JSON.stringify(v, null, 2)]);
+        }
+        return fields;
+    }
+
+    methodNames() {
+        return ['newNonce', 'newAccount', 'newOrder', 'newAuthz',
+                'revokeCert', 'keyChange', 'renewalInfo'];
+    }
+
+    methodEnabled(name) {
+        return !!(this.resource && this.resource[name] !== undefined);
+    }
+
+    /** Directories aren't authenticated; use a plain GET. */
+    async reload() {
+        const response = await this.env.fetch(this.url);
+        const resource = await response.json();
+        this.env.objectStore.put({...this.stored, resource});
+        return {ok: response.ok, response, targetUrl: this.url, resource};
+    }
+
     /**
      * Plain GET to the newNonce endpoint, harvesting the response header.
      * @returns {Promise<string | null>} the nonce captured, or null if missing

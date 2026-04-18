@@ -158,43 +158,6 @@ function viewObject(url) {
     renderObject(url, getObject(url));
 }
 
-function renderMethod(name, directory, signer) {
-    let button = element('button', name);
-    button.className = 'method';
-    if (directory.resource[name] !== undefined) {
-        button.onclick = () => runMethod(name, directory, signer);
-    } else {
-        button.disabled = true;
-    }
-
-    return button;
-}
-
-function renderDirectory(url, directory) {
-    let metadataDiv = div(element('h2', 'Metadata'));
-
-    for (const [key, value] of Object.entries(directory.resource['meta'])) {
-        let p = document.createElement('p');
-        p.innerText = `${key}: ${JSON.stringify(value, null, 2)}`;
-        metadataDiv.appendChild(p)
-    }
-
-    let methodsHeader = element('h2', 'Methods');
-
-    let methodsDiv = div(methodsHeader);
-    const methods = [['newNonce', 'newAccount', 'newOrder', 'newAuthz'], ['revokeCert', 'keyChange', 'renewalInfo']];
-    for (const row of methods) {
-        const rowDiv = div();
-        rowDiv.className = 'row';
-        for (const method of row) {
-            rowDiv.appendChild(renderMethod(method, directory));
-        }
-        methodsDiv.appendChild(rowDiv);
-    }
-
-    return div(metadataDiv, methodsDiv);
-}
-
 /**
  * Generic renderer driven by AcmeObject methods. Used for account, order,
  * authorization, certificate. Directory and challenge have specialized renderers.
@@ -244,6 +207,10 @@ function renderGeneric(obj) {
  * @param {string} method
  */
 function dispatchObjectMethod(obj, method) {
+    if (obj instanceof AcmeDirectory) {
+        runMethod(method, obj.stored, undefined);
+        return;
+    }
     if (obj.type === 'account') {
         const directoryStored = getObject(obj.directoryUrl);
         if (directoryStored) {
@@ -335,18 +302,15 @@ export async function renderObject(url, object) {
     }
 
     let resource;
-    if (object.type === 'directory') {
-        resource = renderDirectory(url, object);
-    } else if (object.type === 'nonces') {
+    if (object.type === 'nonces') {
         document.getElementById('poker').replaceChildren(renderNonces(url, object));
         return;
+    }
+    const obj = fromStored(object, env);
+    if (obj instanceof AcmeChallenge) {
+        resource = await renderChallenge(obj);
     } else {
-        const obj = fromStored(object, env);
-        if (obj instanceof AcmeChallenge) {
-            resource = await renderChallenge(obj);
-        } else {
-            resource = renderGeneric(obj);
-        }
+        resource = renderGeneric(obj);
     }
 
     let rawH2 = element('h2', 'Resource JSON');
