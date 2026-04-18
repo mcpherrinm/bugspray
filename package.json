@@ -1,0 +1,14 @@
+{
+  "name": "acme-bugspray",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "bunx tsc -p jsconfig.json --noEmit",
+    "cli": "bun run cli.js"
+  },
+  "devDependencies": {
+    "@types/bun": "^1",
+    "typescript": "^5"
+  }
+}

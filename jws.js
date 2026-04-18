@@ -41,6 +41,7 @@ async function newKey(name) {
             true,
             ['verify']);
 
+        // @ts-ignore — pre-existing oddity, rewritten in jws.js refactor
         let loadedKey = window.crypto.subtle.CryptoKeyPair = {
             privateKey: privateKey,
             publicKey: publicKey
