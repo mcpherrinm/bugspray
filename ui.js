@@ -192,21 +192,7 @@ function renderDirectory(url, directory) {
         methodsDiv.appendChild(rowDiv);
     }
 
-    let dirDiv = div(metadataDiv, methodsDiv)
-
-    let unknownDiv = div(element('h2', 'Unknown Directory Entries'));
-    let unknown = false;
-    for (const [key, value] of Object.entries(directory.resource)) {
-        if (key === "meta" || methods[0].includes(key) || methods[1].includes(key)) {
-            continue
-        }
-        unknownDiv.appendChild(element('p', `${key}: ${JSON.stringify(value)}`));
-        unknown = true;
-    }
-    if (unknown) {
-        dirDiv.appendChild(unknownDiv)
-    }
-    return dirDiv;
+    return div(metadataDiv, methodsDiv);
 }
 
 /**
