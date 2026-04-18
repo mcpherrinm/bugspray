@@ -4,32 +4,51 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-ACME (RFC 8555) client written in client-side JavaScript, intended for learning the protocol and testing ACME servers. Per the README: "intended for testing only" — keys live in the browser via WebCrypto/localStorage; there is no backend, no build step, and no test suite.
+ACME (RFC 8555) client written in client-side JavaScript, intended for learning the protocol and testing ACME servers. Per the README: "intended for testing only"; keys live in the browser via WebCrypto/localStorage. No build step — `index.html` loads the modules directly.
 
-## Running
+## Commands
 
-There is no build system. Open `index.html` over an HTTP origin (e.g. `python3 -m http.server` from the repo root, then visit `http://localhost:8000`). Modules are loaded as native ES modules via `<script type="module">`, so `file://` will not work.
+- `bun test` — run `acme.test.js` (pure-logic coverage for the `acme.js` domain).
+- `bun run typecheck` — JSDoc-driven typecheck via `bunx tsc` against `jsconfig.json`. `noImplicitAny` and `strictNullChecks` are off so legacy DOM code in `ui.js`/`nav.js` passes without full annotation; new files in `acme.js` etc. carry JSDoc types for editor help.
+- `bun run cli.js <directory-url>` — Node/Bun smoke test that fetches a directory and prints metadata, writing state to `./bugspray-state.json`.
+- Browser: serve the repo over HTTP (e.g. `python3 -m http.server`) and open `index.html`. `file://` will not work — the modules need a real origin.
 
 ## Architecture
 
-The app is four ES modules with no framework:
+Four layers, all ES modules with no framework:
 
-- **`storage.js`** — Persists a single `Map<url, object>` to `localStorage` under the `bugspray` key. Every ACME resource is keyed by its URL. An `object` has shape `{url, type, name, parent, resource, key}` where `type` ∈ {`directory`, `account`, `order`, `authorization`, `challenge`, `certificate`, `nonces`}, `parent` is the URL of the owning resource (forming a tree rooted at directories), `resource` is the JSON returned by the server, and `key` is the localStorage name of the signing key. The whole map is rewritten on every `setObject` — fine because the dataset is tiny.
+```
+ui.js, nav.js   ← browser DOM (also: cli.js for Node)
+     │
+     ▼
+  acme.js       ← domain: AcmeObject + Directory/Account/Order/
+                  Authorization/Challenge/Certificate, NoncePool, postSigned
+     │               │
+     ▼               ▼
+  jws.js         Env typedef (objectStore, keyStore, fetch, subtle)
+  (pure crypto)       │
+                ┌─────┴─────┐
+                ▼           ▼
+         browserEnv.js   nodeEnv.js
+         (localStorage)  (JSON file)
+```
 
-- **`jws.js`** — WebCrypto wrapper for ES256 JWS signing. `newKey(name)` lazily generates a P-256 keypair and persists it to `localStorage` under `bugspray|key|<name>` (separate from the resource Map). `protect(key, kid, nonce, url)` builds the JWS protected header — passing `kid === null` embeds the public `jwk` (used for `newAccount` and certificate-key `revokeCert`); otherwise the `kid` (account URL) is used. `sign` produces the final JWS JSON. `thumbprint` computes the JWK SHA-256 thumbprint for key authorizations.
+- **`acme.js`** owns every ACME resource as a JSDoc-typed ES6 class. Each subclass provides `displayFields()`, `children()`, `methodNames()`, and — when the wire format isn't JSON — a `static ingest(response)`. `AcmeCertificate.ingest` parses `application/pem-certificate-chain` into `{pem, chain}`; the storage contract is therefore "`resource` is always JSON-serializable", with no content-type sniffing in the network layer. `fromStored` dispatches stored objects to the right class and migrates any legacy `{value, contentType}` certificate payloads in place.
+- **`postSigned`** (in `acme.js`) is the single chokepoint for ACME-authenticated requests: it pulls a nonce from the directory's `NoncePool`, signs with `jws.js`, optionally routes through a `ConfirmHook` for preview/edit, POSTs, captures the reply nonce, and persists the response. The `ConfirmHook` is how `ui.js` keeps the "show protected/signed JSON before sending" UX without leaking DOM into `acme.js`.
+- **`NoncePool`** is one-per-directory, memoized in an in-process registry, and mirrored to the `ObjectStore` as a synthetic `${directoryUrl}/nonces` entry (unchanged wire shape, so old localStorage works). `NoncePool.load` tolerates and migrates pre-timestamp string entries.
+- **`storage.js`** persists a single `Map<url, StoredObject>` to `localStorage` under `bugspray`. `createObjectStore()` returns the `ObjectStore` typedef consumed by `acme.js`, so that module never imports `storage.js` directly.
+- **`jws.js`** takes `SubtleCrypto` and a `KeyStore` as explicit parameters — no `window` references — so it works under both the browser (`buildBrowserEnv`) and Bun (`buildNodeEnv`). `kid === null` embeds the public `jwk` (used for `newAccount` and certificate-key `revokeCert`); otherwise the account URL goes into `kid`.
+- **`ui.js`** owns layout only. It renders each object through a generic renderer (`displayFields` / `children` / `methodNames`) plus a small specialized renderer that consumes `AcmeChallenge.instructions()`. The `directory` page has its own renderer because of the meta + two-row method grid layout. Method dispatch (`dispatchObjectMethod`) branches on type: directory/account methods invoke `runMethod` (form-builder UI → `AcmeDirectory.newFoo(...)`), `AcmeOrder.finalize` opens a CSR form, `AcmeChallenge.respond` goes straight to the preview.
 
-- **`nav.js`** — Renders the left treeview from `listObjects()`, parenting each item under the entry whose URL matches its `parent` field. Clicking a label calls `renderObject(url, object)` from `ui.js`. Note: `nav.js` and `ui.js` import each other — works because both imports are functions consumed at call time.
+### Object tree and `parent`
 
-- **`ui.js`** — Everything else: the right-pane renderers (`renderDirectory`, `renderAccount`, `renderOrder`, `renderAuthorization`, `renderChallenge`, `renderCertificate`, `renderNonces`), the request flow, and the in-memory nonce pool. Helper builders (`div`, `element`, `input`, `select`, `multi`, `checkbox`, `goButton`, `copiable`) are defined at the top — prefer reusing them over hand-rolling DOM.
+Directory → Account → Order → Authorization → Challenge, with Certificate hanging off Order. The `parent` field in every `StoredObject` is what drives both the treeview (`nav.js`) and the `directoryUrl` / `accountUrl` walks in `AcmeObject`. If you add a resource type, set `parent` correctly or the item ends up at the root and `nav.js` logs a warning.
 
-### Request flow
+### Request flow end-to-end
 
-User clicks a method button → `runMethod(method, directory, signer)` builds a form via the per-method helper (`newAccount`, `newOrder`, etc.), which returns a `getData()` closure → on submit, `poster(data)` shows the protected header + signed body in editable textareas → `submit(...)` POSTs to the ACME server, captures the `Location` header as the new resource's URL, stores it via `setObject`, and runs the per-method `callback` (e.g. `newOrder`'s callback creates child `authorization` and `certificate` objects so they appear in the tree). `newNonce` and `renewalInfo` bypass `poster` because they aren't authenticated POSTs. Every response is fed through `gotNonce(headers, directoryUrl)` to harvest `Replay-Nonce`.
+1. User clicks a method button on a directory or account page.
+2. `runMethod` builds the form via a per-method helper (`newAccountForm`, `newOrderForm`, …) that returns a `getData()` closure yielding the request payload.
+3. On submit, `runMethod` calls `dirObj.newFoo(payload, keyName, accountUrl, {confirm: showPreviewAndAwaitSubmit})`.
+4. `postSigned` signs → `ConfirmHook` renders the preview (editable protected/signed textareas) and resolves on submit-click with the (possibly edited) signed body → `env.fetch` POSTs → `NoncePool.captureFromHeaders` harvests the next nonce → response body goes through `AcmeFoo.ingest` → the stored object is written and any per-class `postProcess` stitches child stubs into the tree (`newOrder` creates authz + cert children; `authorization.reload` creates challenge children; etc.).
 
-### Nonce pool
-
-`noncePools` is an in-memory `{directoryUrl: [{nonce, timestamp}, ...]}` mirrored to `Storage` as a synthetic `nonces`-typed object at `${directoryUrl}/nonces` so the pool appears in the treeview. `getNonce` pops; `gotNonce` pushes. On startup `setup()` rehydrates the pool from storage, migrating any legacy string-only entries to `{nonce, timestamp: null}`.
-
-### Object tree shape
-
-Directory → Account → Order → Authorization → Challenge, plus Certificate hanging off Order. The `parent` field is what makes the treeview work — when adding new resource creation paths, set `parent` correctly or the item will end up at the root with a console warning from `nav.js`.
+Reloading any existing object (the "Reload" button on each page) calls `obj.reload({confirm})`, which uses the object's static `ingest` and its per-class `postReload` hook. There is exactly one POST-and-persist path; the content-type branch from the old `submit` is gone.
