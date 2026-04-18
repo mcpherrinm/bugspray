@@ -240,7 +240,11 @@ function renderGeneric(obj) {
         for (const m of methods) {
             const btn = element('button', m);
             btn.className = 'method';
-            btn.onclick = () => dispatchObjectMethod(obj, m);
+            if (obj.methodEnabled(m)) {
+                btn.onclick = () => dispatchObjectMethod(obj, m);
+            } else {
+                btn.disabled = true;
+            }
             row.appendChild(btn);
         }
         methodsDiv.appendChild(row);

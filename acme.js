@@ -296,6 +296,14 @@ export class AcmeObject {
     methodNames() { return []; }
 
     /**
+     * Whether a given method should be enabled in the UI. Default: true.
+     * Subclasses override to consult the directory for support.
+     * @param {string} _name
+     * @returns {boolean}
+     */
+    methodEnabled(_name) { return true; }
+
+    /**
      * Called after a reload/update succeeds, to stitch any referenced child
      * resources into the object store. Default: noop.
      * @param {any} resource
@@ -338,7 +346,12 @@ export class AcmeAccount extends AcmeObject {
     }
 
     methodNames() {
-        return ['newOrder', 'newAuthz', 'revokeCert', 'keyChange'];
+        return ['newNonce', 'newOrder', 'newAuthz', 'revokeCert', 'keyChange'];
+    }
+
+    methodEnabled(name) {
+        const dir = this.env.objectStore.get(this.directoryUrl || '');
+        return !!(dir && dir.resource && dir.resource[name] !== undefined);
     }
 }
 
