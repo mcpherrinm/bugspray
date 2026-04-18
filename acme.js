@@ -139,12 +139,17 @@ export function resetNoncePools() {
 }
 
 /**
- * Hook used to preview / edit the signed JWS body before it goes on the wire.
- * The default (when omitted) just returns the original signed body.
- * @callback ConfirmHook
- * @param {{protectedData: JwsProtected, defaultSigned: string, msg: object|string, url: string}} preview
- * @returns {Promise<string | null>} body to POST, or null to cancel
+ * Snapshot a `Headers` object as an array of [name, value] pairs for storage.
+ * (Headers#entries() is missing from some TS lib targets; iterate manually.)
+ * @param {Headers} headers
+ * @returns {Array<[string, string]>}
  */
+function headersToArray(headers) {
+    /** @type {Array<[string, string]>} */
+    const out = [];
+    headers.forEach((value, key) => out.push([key, value]));
+    return out;
+}
 
 /**
  * Walk parent chain from the given URL up to the directory.
@@ -164,73 +169,144 @@ function findDirectoryUrl(store, url) {
 
 /**
  * Default JSON body parser. Subclasses override `static ingest` when the wire
- * format isn't JSON (notably `AcmeCertificate`).
- * @param {Response} response
+ * format isn't JSON (notably `AcmeCertificate`). Takes already-read text so
+ * the network layer can capture the raw body for display before parsing.
+ * @param {string} text
+ * @param {string | null} _contentType
  */
-async function defaultIngest(response) {
-    return await response.json();
+function defaultIngest(text, _contentType) {
+    return text === '' ? null : JSON.parse(text);
+}
+
+/**
+ * @typedef {Object} BuildSignedOpts
+ * @property {Env} env
+ * @property {string} url
+ * @property {string} key - keystore name to sign with
+ * @property {string | null} kid - account URL, or null to embed jwk
+ * @property {string} nonce
+ * @property {object | string} payload
+ */
+
+/**
+ * @typedef {Object} BuildSignedResult
+ * @property {JwsProtected} protectedData
+ * @property {string} signedBody
+ */
+
+/**
+ * Build the JWS protected header + signed body for a request, without sending.
+ * Used by the requester UI to live-update the editable preview as the form
+ * changes.
+ * @param {BuildSignedOpts} opts
+ * @returns {Promise<BuildSignedResult>}
+ */
+export async function buildSigned({env, url, key: keyName, kid, nonce, payload}) {
+    const key = await getOrCreateKey(env.keyStore, env.subtle, keyName);
+    const protectedData = await protect(env.subtle, key, kid, nonce, url);
+    const signedBody = await sign(env.subtle, key, protectedData, payload);
+    return {protectedData, signedBody};
+}
+
+/**
+ * @typedef {Object} SubmitOpts
+ * @property {Env} env
+ * @property {string} url - target POST URL (may differ from the URL inside the signed protected header — caller's choice)
+ * @property {string} signedBody
+ * @property {string} type - storage type for the resulting object
+ * @property {string} parent
+ * @property {string} [name]
+ * @property {string} [key] - signing key name to persist alongside the resource
+ * @property {string} [directoryUrl] - directory whose nonce pool gets the next replay-nonce
+ * @property {(text: string, contentType: string | null) => any} [ingest]
+ * @property {(resource: any, targetUrl: string) => void} [postProcess]
+ */
+
+/**
+ * @typedef {Object} SubmitResult
+ * @property {boolean} ok
+ * @property {Response} response
+ * @property {string} targetUrl
+ * @property {any} resource
+ * @property {import("./storage.js").HttpRequestRecord} lastRequest
+ * @property {import("./storage.js").HttpResponseRecord} lastResponse
+ */
+
+/**
+ * POST a signed JWS body, capture the exchange, parse the body via the type's
+ * ingest, and persist on success. The captured `lastRequest`/`lastResponse`
+ * are returned so callers can render them in the response panel.
+ * @param {SubmitOpts} opts
+ * @returns {Promise<SubmitResult>}
+ */
+export async function submitSigned(opts) {
+    const {env, url, signedBody, type, parent, name = '', key: keyName} = opts;
+    const Cls = TYPE_REGISTRY[type];
+    const ingest = opts.ingest || (Cls ? Cls.ingest : defaultIngest);
+    const directoryUrl = opts.directoryUrl || findDirectoryUrl(env.objectStore, parent) || parent;
+    const pool = getNoncePool(env, directoryUrl);
+
+    const reqHeaders = {'Content-Type': 'application/jose+json'};
+    const lastRequest = {method: 'POST', url, headers: reqHeaders, body: signedBody};
+
+    const response = await env.fetch(url, {method: 'POST', headers: reqHeaders, body: signedBody});
+    pool.captureFromHeaders(response.headers);
+
+    const respText = await response.text();
+    const contentType = response.headers.get('Content-Type');
+    const lastResponse = {
+        status: response.status,
+        statusText: response.statusText,
+        headers: headersToArray(response.headers),
+        body: respText,
+        contentType,
+    };
+
+    const targetUrl = response.headers.get('Location') || url;
+    let resource = null;
+    if (response.ok) {
+        resource = ingest(respText, contentType);
+        env.objectStore.put({
+            url: targetUrl, type, name, parent,
+            resource, key: keyName, lastRequest, lastResponse,
+        });
+        if (opts.postProcess) opts.postProcess(resource, targetUrl);
+    }
+
+    return {ok: response.ok, response, targetUrl, resource, lastRequest, lastResponse};
 }
 
 /**
  * @typedef {Object} PostSignedOpts
  * @property {Env} env
- * @property {string} url - target POST URL
- * @property {string} key - keystore name to sign with
- * @property {string | null} kid - account URL, or null to embed jwk
- * @property {object | string} payload - request body (object → JSON-encoded; "" → POST-as-GET)
- * @property {string} type - storage type for the resulting object
- * @property {string} parent - storage parent URL
+ * @property {string} url
+ * @property {string} key
+ * @property {string | null} kid
+ * @property {object | string} payload
+ * @property {string} type
+ * @property {string} parent
  * @property {string} [name]
- * @property {(response: Response) => Promise<any>} [ingest]
+ * @property {(text: string, contentType: string | null) => any} [ingest]
  * @property {(resource: any, targetUrl: string) => void} [postProcess]
- * @property {ConfirmHook} [confirm]
  */
 
 /**
- * @typedef {Object} PostSignedResult
- * @property {boolean} ok
- * @property {Response} response
- * @property {string} targetUrl
- * @property {any} resource
- */
-
-/**
- * Sign + POST + persist. The single chokepoint for ACME-authenticated requests.
+ * Convenience wrapper: take a nonce, build the signed body, submit, persist.
+ * Used by class methods (AcmeDirectory.newOrder etc.) when the caller doesn't
+ * need to expose the intermediate signed body for editing.
  * @param {PostSignedOpts} opts
- * @returns {Promise<PostSignedResult | null>} null when the user cancels via confirm hook
+ * @returns {Promise<SubmitResult>}
  */
 export async function postSigned(opts) {
     const {env, url, key: keyName, kid, payload, type, parent, name = ''} = opts;
-    const Cls = TYPE_REGISTRY[type];
-    const ingest = opts.ingest || (Cls ? Cls.ingest : defaultIngest);
     const directoryUrl = findDirectoryUrl(env.objectStore, parent) || parent;
     const pool = getNoncePool(env, directoryUrl);
     const nonce = pool.take();
-    const key = await getOrCreateKey(env.keyStore, env.subtle, keyName);
-    const protectedData = await protect(env.subtle, key, kid, nonce, url);
-    const defaultSigned = await sign(env.subtle, key, protectedData, payload);
-
-    const signedBody = opts.confirm
-        ? await opts.confirm({protectedData, defaultSigned, msg: payload, url})
-        : defaultSigned;
-    if (signedBody === null) return null;
-
-    const response = await env.fetch(url, {
-        method: 'POST',
-        headers: {'Content-Type': 'application/jose+json'},
-        body: signedBody,
+    const {signedBody} = await buildSigned({env, url, key: keyName, kid, nonce, payload});
+    return await submitSigned({
+        env, url, signedBody, type, parent, name, key: keyName,
+        directoryUrl, ingest: opts.ingest, postProcess: opts.postProcess,
     });
-    pool.captureFromHeaders(response.headers);
-
-    const targetUrl = response.headers.get('Location') || url;
-    const resource = await ingest(response);
-
-    if (response.ok) {
-        env.objectStore.put({url: targetUrl, type, name, parent, resource, key: keyName});
-        if (opts.postProcess) opts.postProcess(resource, targetUrl);
-    }
-
-    return {ok: response.ok, response, targetUrl, resource};
 }
 
 // ---------------------------------------------------------------------------
@@ -261,8 +337,13 @@ export class AcmeObject {
     get resource() { return this.stored.resource; }
     get keyName() { return this.stored.key; }
 
-    /** @returns {Promise<any>} @param {Response} response */
-    static ingest(response) { return defaultIngest(response); }
+    /**
+     * Parse a raw response body into a JSON-serializable resource.
+     * @param {string} text
+     * @param {string | null} contentType
+     * @returns {any}
+     */
+    static ingest(text, contentType) { return defaultIngest(text, contentType); }
 
     /** Walk parent chain to find the owning directory URL. */
     get directoryUrl() {
@@ -313,9 +394,8 @@ export class AcmeObject {
 
     /**
      * POST-as-GET to refresh the resource.
-     * @param {{confirm?: ConfirmHook}} [hooks]
      */
-    reload(hooks = {}) {
+    reload() {
         const Cls = /** @type {any} */ (this.constructor);
         return postSigned({
             env: this.env,
@@ -325,7 +405,6 @@ export class AcmeObject {
             payload: '',
             type: this.type,
             parent: this.parent,
-            confirm: hooks.confirm,
             ingest: Cls.ingest,
             postProcess: (resource, targetUrl) => this.postReload(resource, targetUrl),
         });
@@ -421,9 +500,8 @@ export class AcmeOrder extends AcmeObject {
 
     /**
      * @param {string} csr
-     * @param {{confirm?: ConfirmHook}} [hooks]
      */
-    finalize(csr, hooks = {}) {
+    finalize(csr) {
         return postSigned({
             env: this.env,
             url: this.resource.finalize,
@@ -432,7 +510,6 @@ export class AcmeOrder extends AcmeObject {
             payload: {csr: AcmeOrder.normalizeCsr(csr)},
             type: 'order',
             parent: this.parent,
-            confirm: hooks.confirm,
             postProcess: (resource, targetUrl) => this.postReload(resource, targetUrl),
         });
     }
@@ -571,8 +648,7 @@ export class AcmeChallenge extends AcmeObject {
         ];
     }
 
-    /** @param {{confirm?: ConfirmHook}} [hooks] */
-    respond(hooks = {}) {
+    respond() {
         return postSigned({
             env: this.env,
             url: this.url,
@@ -581,7 +657,6 @@ export class AcmeChallenge extends AcmeObject {
             payload: {},
             type: this.type,
             parent: this.parent,
-            confirm: hooks.confirm,
         });
     }
 }
@@ -597,8 +672,11 @@ export function splitPemChain(pem) {
 
 /** ACME certificate (RFC 8555 §7.4.2). Wire format is application/pem-certificate-chain. */
 export class AcmeCertificate extends AcmeObject {
-    static async ingest(response) {
-        const text = await response.text();
+    /**
+     * @param {string} text
+     * @param {string | null} _contentType
+     */
+    static ingest(text, _contentType) {
         return {pem: text, chain: splitPemChain(text)};
     }
 
@@ -659,10 +737,21 @@ export class AcmeDirectory extends AcmeObject {
 
     /** Directories aren't authenticated; use a plain GET. */
     async reload() {
+        const lastRequest = {method: 'GET', url: this.url, headers: {}, body: ''};
         const response = await this.env.fetch(this.url);
-        const resource = await response.json();
-        this.env.objectStore.put({...this.stored, resource});
-        return {ok: response.ok, response, targetUrl: this.url, resource};
+        const respText = await response.text();
+        const contentType = response.headers.get('Content-Type');
+        const lastResponse = {
+            status: response.status, statusText: response.statusText,
+            headers: headersToArray(response.headers),
+            body: respText, contentType,
+        };
+        let resource = null;
+        if (response.ok) {
+            resource = JSON.parse(respText);
+            this.env.objectStore.put({...this.stored, resource, lastRequest, lastResponse});
+        }
+        return {ok: response.ok, response, targetUrl: this.url, resource, lastRequest, lastResponse};
     }
 
     /**
@@ -681,9 +770,8 @@ export class AcmeDirectory extends AcmeObject {
     /**
      * @param {object} payload - {termsOfServiceAgreed, contact, onlyReturnExisting}
      * @param {string} keyName
-     * @param {{confirm?: ConfirmHook}} [hooks]
      */
-    newAccount(payload, keyName, hooks = {}) {
+    newAccount(payload, keyName) {
         return postSigned({
             env: this.env,
             url: this.resource.newAccount,
@@ -692,7 +780,6 @@ export class AcmeDirectory extends AcmeObject {
             payload,
             type: 'account',
             parent: this.url,
-            confirm: hooks.confirm,
         });
     }
 
@@ -700,9 +787,8 @@ export class AcmeDirectory extends AcmeObject {
      * @param {object} payload - {identifiers, profile?, notBefore?, notAfter?}
      * @param {string} keyName
      * @param {string} accountUrl
-     * @param {{confirm?: ConfirmHook}} [hooks]
      */
-    newOrder(payload, keyName, accountUrl, hooks = {}) {
+    newOrder(payload, keyName, accountUrl) {
         return postSigned({
             env: this.env,
             url: this.resource.newOrder,
@@ -711,7 +797,6 @@ export class AcmeDirectory extends AcmeObject {
             payload,
             type: 'order',
             parent: accountUrl,
-            confirm: hooks.confirm,
             postProcess: (resource, targetUrl) => {
                 if (Array.isArray(resource.authorizations)) {
                     for (const authzUrl of resource.authorizations) {
@@ -736,9 +821,8 @@ export class AcmeDirectory extends AcmeObject {
      * @param {object} payload
      * @param {string} keyName
      * @param {string} accountUrl
-     * @param {{confirm?: ConfirmHook}} [hooks]
      */
-    newAuthz(payload, keyName, accountUrl, hooks = {}) {
+    newAuthz(payload, keyName, accountUrl) {
         return postSigned({
             env: this.env,
             url: this.resource.newAuthz,
@@ -747,7 +831,6 @@ export class AcmeDirectory extends AcmeObject {
             payload,
             type: 'authorization',
             parent: accountUrl,
-            confirm: hooks.confirm,
         });
     }
 }

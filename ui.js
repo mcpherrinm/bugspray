@@ -1,7 +1,11 @@
 import {clearStorage, getObject, listObjects} from "./storage.js";
 import {renderTreeview, setSelectedUrl} from "./nav.js";
 import {buildBrowserEnv} from "./browserEnv.js";
-import {getNoncePool, resetNoncePools, fromStored, AcmeDirectory, AcmeOrder, AcmeChallenge} from "./acme.js";
+import {
+    getNoncePool, resetNoncePools, fromStored,
+    AcmeDirectory, AcmeOrder, AcmeChallenge,
+    buildSigned, submitSigned,
+} from "./acme.js";
 
 const env = buildBrowserEnv();
 
@@ -223,7 +227,16 @@ function dispatchObjectMethod(obj, method) {
         return;
     }
     if (obj instanceof AcmeChallenge && method === 'respond') {
-        postWithPreview((confirm) => obj.respond({confirm})).then(renderTreeview);
+        renderRequester({
+            title: 'Respond to Challenge',
+            url: obj.url,
+            type: obj.type,
+            parent: obj.parent,
+            keyName: obj.keyName || 'key1',
+            kid: obj.accountUrl || '',
+            directoryUrl: obj.directoryUrl || obj.parent,
+            buildForm: () => () => ({}),
+        });
         return;
     }
 }
@@ -289,15 +302,20 @@ export async function renderObject(url, object) {
 
     let resourceURL = element('pre', url)
 
+    const obj = fromStored(object, env);
+
     let reloadBtn = element('button', 'Reload');
-    reloadBtn.onclick = async () => {
-        const obj = fromStored(object, env);
-        await postWithPreview((confirm) => obj.reload({confirm}));
-    };
+    reloadBtn.onclick = () => reloadObjectImmediate(obj);
+
+    let reloadReqBtn = element('button', 'Reload Request');
+    reloadReqBtn.onclick = () => openReloadRequester(obj);
+    if (object.type === 'directory') reloadReqBtn.disabled = true;
+
+    const reloadRow = div(reloadBtn, reloadReqBtn);
 
     if (!object.resource) {
         let msg = element('p', 'Resource not yet fetched. Click Reload to fetch.');
-        document.getElementById('poker').replaceChildren(h1, div(resourceURL, reloadBtn), msg);
+        document.getElementById('poker').replaceChildren(h1, div(resourceURL, reloadRow), msg);
         return;
     }
 
@@ -306,7 +324,6 @@ export async function renderObject(url, object) {
         document.getElementById('poker').replaceChildren(renderNonces(url, object));
         return;
     }
-    const obj = fromStored(object, env);
     if (obj instanceof AcmeChallenge) {
         resource = await renderChallenge(obj);
     } else {
@@ -318,7 +335,52 @@ export async function renderObject(url, object) {
     raw.className = 'rawObject';
     raw.value = JSON.stringify(object.resource, null, 2);
 
-    document.getElementById('poker').replaceChildren(h1, div(resourceURL, reloadBtn), resource, div(rawH2, raw));
+    document.getElementById('poker').replaceChildren(h1, div(resourceURL, reloadRow), resource, div(rawH2, raw));
+
+    showLastExchangeForObject(url);
+}
+
+/**
+ * Reload (POST-as-GET) immediately, show the exchange in #poster, stay on
+ * the object view. If the nonce pool is empty, fetch a fresh nonce first so
+ * the user doesn't need to click twice.
+ * @param {import("./acme.js").AcmeObject} obj
+ */
+async function reloadObjectImmediate(obj) {
+    if (obj instanceof AcmeDirectory) {
+        await obj.reload();
+        renderTreeview();
+        viewObject(obj.url);
+        showLastExchangeForObject(obj.url);
+        return;
+    }
+    const dirUrl = obj.directoryUrl;
+    if (dirUrl && getNoncePool(env, dirUrl).entries.length === 0) {
+        const dirStored = env.objectStore.get(dirUrl);
+        if (dirStored) await new AcmeDirectory(dirStored, env).newNonce();
+    }
+    const result = await obj.reload();
+    renderTreeview();
+    if (result.ok) viewObject(result.targetUrl);
+    showLastExchangeForObject(result.targetUrl);
+}
+
+/**
+ * Open the requester pre-populated for a POST-as-GET on this object's URL.
+ * @param {import("./acme.js").AcmeObject} obj
+ */
+function openReloadRequester(obj) {
+    renderRequester({
+        title: `Reload ${obj.type}`,
+        url: obj.url,
+        type: obj.type,
+        parent: obj.parent,
+        keyName: obj.keyName || 'key1',
+        kid: obj.accountUrl || '',
+        directoryUrl: obj.directoryUrl || obj.parent,
+        buildForm: () => () => '',
+        postProcess: (resource, targetUrl) => obj.postReload(resource, targetUrl),
+    });
 }
 
 function goButton(id, label, onClick) {
@@ -512,146 +574,432 @@ function renewalInfo(f, url) {
 }
 
 function runFinalizeOrder(url, object) {
-    const h1 = element('h1', 'Run finalize');
-
-    let f = document.createElement('form');
-
-    let kid = url;
-    let cur = object;
-    while (cur && cur.type !== 'account') {
-        kid = cur.parent;
-        cur = getObject(kid);
-    }
-
-    let keyInput = input(f, 'keyName', 'Signing key', object.key || 'key1');
-    let kidInput = input(f, 'kid', 'Key ID (Account URI)', kid);
-
-    let csrInput = document.createElement('textarea');
-    csrInput.id = 'csr-input';
-    csrInput.placeholder = '-----BEGIN CERTIFICATE REQUEST-----\n...\n-----END CERTIFICATE REQUEST-----';
-    csrInput.className = 'rawObject';
-    f.appendChild(div(label('csr-input', 'CSR (PEM or Base64url-encoded DER):'), csrInput));
-
-    const go = goButton('go-run-method', 'Run finalize', async () => {
-        const stored = {...object, key: keyInput.value};
-        const order = new AcmeOrder(stored, env);
-        await postWithPreview((confirm) => order.finalize(csrInput.value, {confirm}));
+    const kid = findAccountUrl(url);
+    renderRequester({
+        title: 'Run finalize',
+        url: object.resource.finalize,
+        type: 'order',
+        parent: object.parent,
+        keyName: object.key || 'key1',
+        kid,
+        directoryUrl: findDirectoryUrl(url),
+        buildForm: (f) => {
+            const csrInput = document.createElement('textarea');
+            csrInput.id = 'csr-input';
+            csrInput.placeholder = '-----BEGIN CERTIFICATE REQUEST-----\n...\n-----END CERTIFICATE REQUEST-----';
+            csrInput.className = 'rawObject';
+            f.appendChild(div(label('csr-input', 'CSR (PEM or Base64url-encoded DER):'), csrInput));
+            return () => ({csr: AcmeOrder.normalizeCsr(csrInput.value)});
+        },
+        postProcess: (resource, targetUrl) => {
+            new AcmeOrder({...object, key: undefined, url: targetUrl}, env)
+                .postReload(resource, targetUrl);
+        },
     });
-
-    document.getElementById('poker').replaceChildren(h1, f, go);
 }
 
 function runMethod(method, directory, signer) {
     const h1 = element('h1', `Run ${method}`);
-
     let f = document.createElement('form');
-
-    let keyInput = input(f, 'keyName', 'Signing key', (signer && signer.key) || 'key1');
-    let kidInput = input(f, 'kid', 'Key ID (Account URI)', (signer && signer.kid) || '');
-
-    /** @type {(formGetData: () => any) => Promise<void>} */
-    let invoke = async () => {};
-    /** @type {(() => any) | null} */
-    let getData = null;
     const dirObj = new AcmeDirectory(directory, env);
 
-    switch (method) {
-        case 'newNonce':
-            newNonceForm(f, dirObj);
-            document.getElementById('poker').replaceChildren(h1, f);
-            return;
-        case 'newAccount':
-            getData = newAccountForm(f, directory);
-            invoke = async (g) => {
-                await postWithPreview((confirm) =>
-                    dirObj.newAccount(g(), keyInput.value, {confirm}));
-            };
-            break;
-        case 'newOrder':
-            getData = newOrderForm(f, directory);
-            invoke = async (g) => {
-                await postWithPreview((confirm) =>
-                    dirObj.newOrder(g(), keyInput.value, kidInput.value, {confirm}));
-            };
-            break;
-        case 'newAuthz':
-            getData = newAuthzForm(f, directory);
-            invoke = async (g) => {
-                await postWithPreview((confirm) =>
-                    dirObj.newAuthz(g(), keyInput.value, kidInput.value, {confirm}));
-            };
-            break;
-        case 'revokeCert':
-        case 'keyChange':
-            f.appendChild(element('p', 'TODO: Implement me.'));
-            document.getElementById('poker').replaceChildren(h1, f);
-            return;
-        case 'renewalInfo':
-            f.appendChild(element('p', 'TODO: Implement me.'));
-            document.getElementById('poker').replaceChildren(h1, f);
-            return;
-        default:
-            document.getElementById('poker').replaceChildren(h1, 'Unknown? How did you get here?');
-            return;
+    if (method === 'newNonce') {
+        newNonceForm(f, dirObj);
+        hidePoster();
+        document.getElementById('poker').replaceChildren(h1, f);
+        return;
+    }
+    if (method === 'revokeCert' || method === 'keyChange' || method === 'renewalInfo') {
+        f.appendChild(element('p', 'TODO: Implement me.'));
+        hidePoster();
+        document.getElementById('poker').replaceChildren(h1, f);
+        return;
     }
 
-    const go = goButton('go-run-method', `Run ${method}`, () => invoke(getData));
-    document.getElementById('poker').replaceChildren(h1, f, go);
+    const accountUrl = (signer && signer.kid) || '';
+    const initialKey = (signer && signer.key) || 'key1';
+
+    if (method === 'newAccount') {
+        renderRequester({
+            title: `Run ${method}`,
+            url: directory.resource.newAccount,
+            type: 'account',
+            parent: directory.url,
+            keyName: initialKey,
+            kid: '', // newAccount embeds JWK; KID empty means kid=null
+            directoryUrl: directory.url,
+            buildForm: (form) => newAccountForm(form, directory),
+        });
+        return;
+    }
+
+    if (method === 'newOrder') {
+        renderRequester({
+            title: `Run ${method}`,
+            url: directory.resource.newOrder,
+            type: 'order',
+            parent: accountUrl,
+            keyName: initialKey,
+            kid: accountUrl,
+            directoryUrl: directory.url,
+            buildForm: (form) => newOrderForm(form, directory),
+            postProcess: (resource, targetUrl) => {
+                if (Array.isArray(resource.authorizations)) {
+                    for (const authzUrl of resource.authorizations) {
+                        if (env.objectStore.get(authzUrl)) continue;
+                        env.objectStore.put({
+                            url: authzUrl, type: 'authorization', name: '',
+                            parent: targetUrl, resource: null, key: initialKey,
+                        });
+                    }
+                }
+                if (resource.certificate && !env.objectStore.get(resource.certificate)) {
+                    env.objectStore.put({
+                        url: resource.certificate, type: 'certificate', name: '',
+                        parent: targetUrl, resource: null, key: initialKey,
+                    });
+                }
+            },
+        });
+        return;
+    }
+
+    if (method === 'newAuthz') {
+        renderRequester({
+            title: `Run ${method}`,
+            url: directory.resource.newAuthz,
+            type: 'authorization',
+            parent: accountUrl,
+            keyName: initialKey,
+            kid: accountUrl,
+            directoryUrl: directory.url,
+            buildForm: (form) => newAuthzForm(form, directory),
+        });
+        return;
+    }
+
+    document.getElementById('poker').replaceChildren(h1, 'Unknown? How did you get here?');
+}
+
+// ---------------------------------------------------------------------------
+// Requester + Poster
+// ---------------------------------------------------------------------------
+
+/**
+ * @typedef {Object} RequesterCfg
+ * @property {string} title
+ * @property {string} url - initial target URL
+ * @property {string} type - storage type
+ * @property {string} parent
+ * @property {string} [name]
+ * @property {string} keyName
+ * @property {string} kid - empty string means kid=null (embed JWK)
+ * @property {string} directoryUrl
+ * @property {(form: HTMLFormElement) => () => any} buildForm
+ * @property {(resource: any, targetUrl: string) => void} [postProcess]
+ */
+
+function hidePoster() {
+    const p = document.getElementById('poster');
+    p.hidden = true;
+    p.replaceChildren();
 }
 
 /**
- * Run a request that needs the editable preview UI before sending. The caller
- * supplies a function that takes a ConfirmHook and returns the postSigned
- * promise. We render the result page when it resolves.
- * @param {(confirm: import("./acme.js").ConfirmHook) => Promise<import("./acme.js").PostSignedResult | null>} runWithConfirm
+ * @param {RequesterCfg} cfg
  */
-async function postWithPreview(runWithConfirm) {
-    const result = await runWithConfirm(showPreviewAndAwaitSubmit);
-    if (result === null) return; // cancelled
-    renderTreeview();
-    renderResult(result);
+function renderRequester(cfg) {
+    // ---- center pane ----
+    const h1 = element('h1', cfg.title);
+    const form = document.createElement('form');
+    const keyInput = input(form, 'keyName', 'Signing key', cfg.keyName);
+    const kidInput = input(form, 'kid', 'Key ID (Account URI)', cfg.kid);
+    const getMsg = cfg.buildForm(form);
+
+    const submitBtn = goButton('submit', 'Submit', () => doSubmit());
+    document.getElementById('poker').replaceChildren(h1, form, submitBtn);
+
+    // ---- right pane (composer) ----
+    const poster = document.getElementById('poster');
+    poster.hidden = false;
+
+    const reqTab = makeTabBtn('Request');
+    const respTab = makeTabBtn('Response');
+    const tabBar = div(reqTab, respTab);
+    tabBar.className = 'tabBar';
+
+    const reqPane = document.createElement('div');
+    reqPane.className = 'tabPane';
+    const respPane = document.createElement('div');
+    respPane.className = 'tabPane';
+    respPane.hidden = true;
+
+    function activate(/** @type {'req'|'resp'} */ which) {
+        reqTab.classList.toggle('active', which === 'req');
+        respTab.classList.toggle('active', which === 'resp');
+        reqPane.hidden = which !== 'req';
+        respPane.hidden = which !== 'resp';
+    }
+    reqTab.onclick = () => activate('req');
+    respTab.onclick = () => activate('resp');
+    activate('req');
+
+    const nonceBanner = document.createElement('div');
+    nonceBanner.className = 'nonceMissing';
+    nonceBanner.hidden = true;
+
+    const urlInput = document.createElement('input');
+    urlInput.type = 'text';
+    urlInput.value = cfg.url;
+
+    const payloadArea = document.createElement('textarea');
+    const protectedArea = document.createElement('textarea');
+    const signedArea = document.createElement('textarea');
+
+    reqPane.append(
+        nonceBanner,
+        labeled('URL', urlInput),
+        labeled('Payload', payloadArea),
+        labeled('Protected Header', protectedArea),
+        labeled('Signed JWS', signedArea),
+    );
+
+    poster.replaceChildren(tabBar, reqPane, respPane);
+
+    // ---- nonce + signing state ----
+    /** @type {string | null} */
+    let currentNonce = null;
+    /** @type {boolean} signed body is in sync with form state */
+    let signedFresh = false;
+
+    function showNonceBanner() {
+        nonceBanner.replaceChildren();
+        const msg = element('span', 'No nonce available — required to sign.');
+        const fetchBtn = element('button', 'Get new nonce');
+        fetchBtn.type = 'button';
+        fetchBtn.onclick = async () => {
+            fetchBtn.disabled = true;
+            try {
+                const dirStored = env.objectStore.get(cfg.directoryUrl);
+                if (dirStored) {
+                    await new AcmeDirectory(dirStored, env).newNonce();
+                    renderTreeview();
+                }
+                await takeNonceAndRebuild();
+            } finally {
+                fetchBtn.disabled = false;
+            }
+        };
+        nonceBanner.append(msg, fetchBtn);
+        nonceBanner.hidden = false;
+        submitBtn.disabled = true;
+    }
+    function hideNonceBanner() {
+        nonceBanner.hidden = true;
+        submitBtn.disabled = false;
+    }
+
+    async function takeNonceAndRebuild() {
+        const pool = getNoncePool(env, cfg.directoryUrl);
+        if (pool.entries.length === 0) {
+            currentNonce = null;
+            showNonceBanner();
+            payloadArea.value = '';
+            protectedArea.value = '';
+            signedArea.value = '';
+            return;
+        }
+        currentNonce = pool.take();
+        renderTreeview();
+        hideNonceBanner();
+        await rebuildSigned();
+    }
+
+    async function rebuildSigned() {
+        if (currentNonce === null) return;
+        const msg = getMsg();
+        const url = urlInput.value;
+        const kid = kidInput.value === '' ? null : kidInput.value;
+        try {
+            const {protectedData, signedBody} = await buildSigned({
+                env, url, key: keyInput.value, kid, nonce: currentNonce, payload: msg,
+            });
+            payloadArea.value = typeof msg === 'string' ? msg : JSON.stringify(msg, null, 2);
+            protectedArea.value = JSON.stringify(protectedData, null, 2);
+            signedArea.value = signedBody;
+            signedFresh = true;
+        } catch (e) {
+            signedArea.value = `Error signing: ${e}`;
+            signedFresh = false;
+        }
+    }
+
+    form.addEventListener('input', () => { rebuildSigned(); });
+    urlInput.addEventListener('input', () => { rebuildSigned(); });
+
+    async function doSubmit() {
+        if (currentNonce === null) return;
+        submitBtn.disabled = true;
+        try {
+            const result = await submitSigned({
+                env,
+                url: urlInput.value,
+                signedBody: signedArea.value,
+                type: cfg.type,
+                parent: cfg.parent,
+                name: cfg.name || '',
+                key: keyInput.value,
+                directoryUrl: cfg.directoryUrl,
+                postProcess: cfg.postProcess,
+            });
+            renderTreeview();
+            currentNonce = null; // consumed
+            if (result.ok) {
+                viewObject(result.targetUrl); // also re-renders #poster with the new exchange
+            } else {
+                renderResponseInto(respPane, result.lastResponse);
+                activate('resp');
+                // Take a fresh nonce for retry
+                await takeNonceAndRebuild();
+            }
+        } catch (e) {
+            respPane.replaceChildren(element('p', `Network error: ${e}`));
+            activate('resp');
+        } finally {
+            submitBtn.disabled = currentNonce === null;
+        }
+    }
+
+    // Kick off
+    takeNonceAndRebuild();
 }
 
-/** @type {import("./acme.js").ConfirmHook} */
-async function showPreviewAndAwaitSubmit({protectedData, defaultSigned, msg, url}) {
-    return new Promise((resolve) => {
-        const h1 = element('h1', 'Submit Request');
-        const f = document.createElement('form');
-
-        const msgArea = element('textarea', '');
-        msgArea.value = typeof msg === 'string' ? msg : JSON.stringify(msg, null, 2);
-        f.appendChild(msgArea);
-
-        const protArea = element('textarea', '');
-        protArea.id = 'protected';
-        protArea.value = JSON.stringify(protectedData, null, 2);
-        f.appendChild(div(label('protected', 'Protected Data'), protArea));
-
-        const signedArea = element('textarea', '');
-        signedArea.id = 'signed';
-        signedArea.value = defaultSigned;
-        f.appendChild(div(label('signed', 'Signed Data'), signedArea));
-
-        const go = goButton('submit', 'Submit Request', () => {
-            const pending = element('h1', 'Submitting...');
-            document.getElementById('poker').replaceChildren(pending);
-            resolve(signedArea.value);
-        });
-
-        document.getElementById('poker').replaceChildren(h1, f, go);
-    });
+/** Build a tab button with `.tabBtn` styling and a data-tab attribute. */
+function makeTabBtn(/** @type {string} */ text) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'tabBtn';
+    b.innerText = text;
+    b.dataset.tab = text.toLowerCase().slice(0, 4); // 'requ' | 'resp' — only used for resp lookup
+    return b;
 }
 
-/** @param {import("./acme.js").PostSignedResult} result */
-function renderResult(result) {
-    const h1 = element('h1', 'Result');
-    const location = element('p', result.targetUrl);
-    const resource = element('textarea', '');
-    resource.value = JSON.stringify(result.resource, null, 2);
-    resource.id = 'result';
-    const view = goButton('view', 'Go to object', () => {
-        viewObject(result.targetUrl);
-    });
-    document.getElementById('poker').replaceChildren(h1, location, resource, view);
+/** Wrap a control with an uppercase field-label div. */
+function labeled(/** @type {string} */ name, /** @type {HTMLElement} */ control) {
+    const lbl = document.createElement('div');
+    lbl.className = 'fieldLabel';
+    lbl.innerText = name;
+    return div(lbl, control);
+}
+
+/**
+ * Render an HTTP response into a tab pane (status, headers, body).
+ * @param {HTMLElement} pane
+ * @param {import("./storage.js").HttpResponseRecord} resp
+ */
+function renderResponseInto(pane, resp) {
+    const status = element('p', `${resp.status} ${resp.statusText}`);
+    status.className = (resp.status >= 200 && resp.status < 300) ? 'statusOk' : 'statusErr';
+
+    const headers = element('pre', resp.headers.map(([k, v]) => `${k}: ${v}`).join('\n'));
+    const body = element('pre', prettyBody(resp.body, resp.contentType));
+
+    pane.replaceChildren(
+        labeled('Status', status),
+        labeled('Headers', headers),
+        labeled('Body', body),
+    );
+}
+
+/**
+ * Render an HTTP request into a tab pane (method+url, headers, body).
+ * @param {HTMLElement} pane
+ * @param {import("./storage.js").HttpRequestRecord} req
+ */
+function renderRequestInto(pane, req) {
+    const line = element('pre', `${req.method} ${req.url}`);
+    const headers = element('pre',
+        Object.entries(req.headers).map(([k, v]) => `${k}: ${v}`).join('\n'));
+    const body = element('pre', prettyBody(req.body, 'application/jose+json'));
+    pane.replaceChildren(
+        labeled('Request Line', line),
+        labeled('Headers', headers),
+        labeled('Body', body),
+    );
+}
+
+/** Pretty-print a JSON body if it parses, else return as-is. */
+function prettyBody(/** @type {string} */ body, /** @type {string | null} */ _ct) {
+    if (!body) return '';
+    try {
+        return JSON.stringify(JSON.parse(body), null, 2);
+    } catch {
+        return body;
+    }
+}
+
+/** If the stored object has a recorded HTTP exchange, show it in #poster. */
+function showLastExchangeForObject(/** @type {string} */ url) {
+    const stored = getObject(url);
+    if (!stored || !stored.lastResponse || !stored.lastRequest) {
+        hidePoster();
+        return;
+    }
+
+    const poster = document.getElementById('poster');
+    poster.hidden = false;
+
+    const reqTab = makeTabBtn('Request');
+    const respTab = makeTabBtn('Response');
+    const tabBar = div(reqTab, respTab);
+    tabBar.className = 'tabBar';
+
+    const closeBtn = element('button', '✕');
+    closeBtn.className = 'posterClose';
+    closeBtn.title = 'Close';
+    closeBtn.onclick = hidePoster;
+    tabBar.appendChild(closeBtn);
+
+    const reqPane = document.createElement('div');
+    reqPane.className = 'tabPane';
+    const respPane = document.createElement('div');
+    respPane.className = 'tabPane';
+
+    renderRequestInto(reqPane, stored.lastRequest);
+    renderResponseInto(respPane, stored.lastResponse);
+
+    function activate(/** @type {'req'|'resp'} */ which) {
+        reqTab.classList.toggle('active', which === 'req');
+        respTab.classList.toggle('active', which === 'resp');
+        reqPane.hidden = which !== 'req';
+        respPane.hidden = which !== 'resp';
+    }
+    reqTab.onclick = () => activate('req');
+    respTab.onclick = () => activate('resp');
+    activate('resp'); // default to response when viewing past exchange
+
+    poster.replaceChildren(tabBar, reqPane, respPane);
+}
+
+/** Walk parent chain to find the directory URL (for nonce pool lookups). */
+function findDirectoryUrl(/** @type {string} */ url) {
+    let obj = getObject(url);
+    let here = url;
+    while (obj && obj.type !== 'directory') {
+        here = obj.parent;
+        obj = getObject(here);
+    }
+    return obj ? obj.url : here;
+}
+
+/** Walk parent chain to find the account URL (for KID). */
+function findAccountUrl(/** @type {string} */ url) {
+    let obj = getObject(url);
+    let here = url;
+    while (obj && obj.type !== 'account') {
+        here = obj.parent;
+        obj = getObject(here);
+    }
+    return obj ? obj.url : here;
 }
 

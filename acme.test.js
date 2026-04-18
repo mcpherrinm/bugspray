@@ -161,24 +161,23 @@ describe("AcmeOrder.normalizeCsr", () => {
 });
 
 describe("AcmeCertificate", () => {
-    test("ingest splits multi-cert chain", async () => {
+    test("ingest splits multi-cert chain", () => {
         const cert = "-----BEGIN CERTIFICATE-----\nMIIA\n-----END CERTIFICATE-----";
         const cert2 = "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----";
         const body = `${cert}\n${cert2}\n`;
-        const response = new Response(body);
-        const ingested = await AcmeCertificate.ingest(response);
+        const ingested = AcmeCertificate.ingest(body, "application/pem-certificate-chain");
         expect(ingested.pem).toBe(body);
         expect(ingested.chain).toEqual([cert, cert2]);
     });
 
-    test("ingest handles single cert with CRLF", async () => {
+    test("ingest handles single cert with CRLF", () => {
         const body = "-----BEGIN CERTIFICATE-----\r\nMIIA\r\n-----END CERTIFICATE-----\r\n";
-        const ingested = await AcmeCertificate.ingest(new Response(body));
+        const ingested = AcmeCertificate.ingest(body, "application/pem-certificate-chain");
         expect(ingested.chain.length).toBe(1);
     });
 
-    test("ingest of empty body yields empty chain", async () => {
-        const ingested = await AcmeCertificate.ingest(new Response(""));
+    test("ingest of empty body yields empty chain", () => {
+        const ingested = AcmeCertificate.ingest("", "application/pem-certificate-chain");
         expect(ingested.chain).toEqual([]);
     });
 

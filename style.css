@@ -188,6 +188,110 @@ textarea {
     border-right: 1px solid #ccc;
 }
 
+#poster {
+    width: 30rem;
+    flex-shrink: 0;
+    padding: 1rem;
+    background: #fafafa;
+    border-right: 1px solid #ccc;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+#poster[hidden] { display: none; }
+
+#poster textarea {
+    height: 6rem;
+    font-family: monospace;
+    font-size: 0.85rem;
+}
+
+#poster input[type="text"] {
+    font-family: monospace;
+    font-size: 0.85rem;
+    width: 100%;
+}
+
+#poster .fieldLabel {
+    font-size: 0.75rem;
+    font-weight: bold;
+    text-transform: uppercase;
+    color: #666;
+    margin-top: 0.25rem;
+}
+
+.tabBar {
+    display: flex;
+    gap: 0.25rem;
+    border-bottom: 1px solid #ccc;
+}
+
+.tabBtn {
+    background: none;
+    color: #555;
+    border: none;
+    border-bottom: 2px solid transparent;
+    border-radius: 0;
+    padding: 0.4rem 0.8rem;
+    font-size: 0.9rem;
+    cursor: pointer;
+}
+
+.tabBtn:hover { background: #eef; color: #333; }
+
+.tabBtn.active {
+    color: #007bff;
+    border-bottom-color: #007bff;
+}
+
+.tabPane[hidden] { display: none; }
+
+.posterClose {
+    background: none;
+    color: #888;
+    border: none;
+    font-size: 1rem;
+    padding: 0 0.4rem;
+    cursor: pointer;
+    margin-left: auto;
+}
+
+.posterClose:hover { color: #000; background: none; }
+
+.nonceMissing {
+    background: #fff3cd;
+    border: 1px solid #ffeeba;
+    color: #856404;
+    padding: 0.5rem;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.nonceMissing button {
+    padding: 0.2rem 0.6rem;
+    font-size: 0.8rem;
+    border-radius: 4px;
+}
+
+.statusOk { color: #28a745; font-weight: bold; }
+.statusErr { color: #dc3545; font-weight: bold; }
+
+#poster pre {
+    white-space: pre-wrap;
+    word-break: break-all;
+    background: #fff;
+    border: 1px solid #ddd;
+    padding: 0.5rem;
+    font-size: 0.8rem;
+    border-radius: 3px;
+    max-height: 20rem;
+    overflow-y: auto;
+}
+
 h1 {
     text-transform:capitalize;
 }

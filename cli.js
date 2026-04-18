@@ -20,7 +20,8 @@ env.objectStore.put({
     resource: directoryJson,
 });
 
-const directory = /** @type {AcmeDirectory} */ (fromStored(env.objectStore.get(url), env));
+const stored = env.objectStore.get(url);
+const directory = /** @type {AcmeDirectory} */ (/** @type {unknown} */ (fromStored(stored, env)));
 console.log("Directory:", directory.url);
 console.log("Methods:", Object.keys(directoryJson).filter(k => k !== "meta").join(", "));
 console.log("Meta:");
