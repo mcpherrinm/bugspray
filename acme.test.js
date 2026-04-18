@@ -262,6 +262,20 @@ describe("AcmeChallenge.instructions", () => {
         expect(copiables[0]).toBe("_validation-persist.example.com");
         expect(copiables[1]).toBe("example-ca.org; accounturi=https://ca/acct/1");
     });
+
+    test("dns-persist-01 appends policy=wildcard for wildcard authzs", async () => {
+        const env = fakeEnv();
+        const url = challengeTree(env, "dns-persist-01");
+        // Mark the parent authz as wildcard.
+        const authz = env.objectStore.get("https://ca/authz/1");
+        authz.resource.wildcard = true;
+        env.objectStore.put(authz);
+
+        const ch = /** @type {AcmeChallenge} */ (fromStored(env.objectStore.get(url), env));
+        const items = await ch.instructions();
+        const copiables = items.filter(i => i.copiable).map(i => i.copiable);
+        expect(copiables[1]).toBe("example-ca.org; accounturi=https://ca/acct/1; policy=wildcard");
+    });
 });
 
 describe("jws.protect", () => {

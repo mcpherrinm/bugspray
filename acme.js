@@ -599,11 +599,15 @@ export class AcmeChallenge extends AcmeObject {
             const caaIdentities = dir?.resource?.meta?.caaIdentities;
             const caDomain = (caaIdentities && caaIdentities.length > 0) ? caaIdentities[0] : '<ca-caa-domain>';
             const accountUri = this.accountUrl || '<account-uri>';
+            const authz = this.env.objectStore.get(this.parent);
+            const isWildcard = authz?.resource?.wildcard === true;
+            let value = `${caDomain}; accounturi=${accountUri}`;
+            if (isWildcard) value += '; policy=wildcard';
             return [
                 {text: 'Create a persistent TXT record (does not need to change between renewals):'},
                 {copiable: `_validation-persist.${domain}`},
                 {text: 'Value:'},
-                {copiable: `${caDomain}; accounturi=${accountUri}`},
+                {copiable: value},
             ];
         }
 
