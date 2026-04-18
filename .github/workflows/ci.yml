@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      pebble:
+        image: ghcr.io/letsencrypt/pebble:latest
+        ports:
+          - 14000:14000
+          - 15000:15000
+        env:
+          # Pebble defaults to rejecting 5% of valid nonces; turn that off so
+          # the test isn't randomly flaky.
+          PEBBLE_WFE_NONCEREJECT: 0
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Wait for pebble
+        run: |
+          for _ in $(seq 1 30); do
+            if curl -sk https://localhost:14000/dir > /dev/null; then
+              echo "pebble is ready"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "pebble did not come up in time"
+          exit 1
+
+      - name: Test (unit + pebble integration)
+        run: bun test
