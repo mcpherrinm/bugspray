@@ -185,10 +185,18 @@ button.method {
     margin: 0.2rem;
 }
 
+/* Code-like blocks: the `*` reset above strips the browser's default
+   monospace, so restore it for the element types that hold protocol data
+   (certificate PEM, JSON resources, CSRs, signed JWS, request/response dumps). */
+pre, code {
+    font-family: monospace;
+}
+
 textarea {
     padding: 0.5rem;
     width: 100%;
     height: 20rem;
+    font-family: monospace;
 }
 
 
@@ -235,7 +243,6 @@ textarea {
 }
 
 #poster textarea {
-    font-family: monospace;
     font-size: 0.85rem;
 }
 
