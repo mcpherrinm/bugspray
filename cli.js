@@ -9,6 +9,7 @@ import {
     fromStored, getNoncePool, resetNoncePools,
     NO_NONCE_SENTINEL, buildSigned, submitSigned,
 } from "./acme.js";
+import {generateKeyAndCsr} from "./csr.js";
 
 /**
  * @typedef {import("./browserEnv.js").Env} Env
@@ -409,6 +410,22 @@ async function cmdCall(env, url, method, flags) {
         }
     }
 
+    // --gen-csr: build a key + CSR for the order's identifiers, save the
+    // private key, and inject the (already base64url) CSR into the payload.
+    if (method === 'finalize' && flags['gen-csr']) {
+        const identifiers = (obj.resource && obj.resource.identifiers) || [];
+        if (identifiers.length === 0) die('order has no identifiers to put in a CSR');
+        const {base64url, privateKeyPem} = await generateKeyAndCsr(env.subtle, identifiers);
+        const keyOut = strFlag(flags, 'key-out') || './bugspray-csr-key.pem';
+        writeFileSync(keyOut, privateKeyPem);
+        console.log(`Generated EC P-256 key + CSR for: ${identifiers.map(/** @param {any} i */ i => `${i.type}:${i.value}`).join(', ')}`);
+        console.log(`Wrote private key to ${keyOut}`);
+        console.log();
+        if (!payload || typeof payload !== 'object') payload = {};
+        payload.csr = base64url;
+        normalizeCsr = false; // already base64url DER
+    }
+
     if (normalizeCsr && payload && typeof payload === 'object' && typeof payload.csr === 'string') {
         payload.csr = AcmeOrder.normalizeCsr(payload.csr);
     }
@@ -555,7 +572,8 @@ function cmdHelp(cmd) {
         view:      'view <url>                       show an object, methods, and next steps',
         raw:       'raw <url>                        dump resource + last HTTP exchange as JSON',
         nonce:     'nonce <url>                      GET newNonce for the URL\'s directory',
-        call:      'call <url> <method> [--payload <json>] [--payload-file <p>] [--edit] [--key <n>] [--account <a>]',
+        call:      'call <url> <method> [--payload <json>] [--payload-file <p>] [--edit] [--key <n>] [--account <a>]\n' +
+                   '                                   finalize also takes [--gen-csr] [--key-out <p>] to generate a key+CSR',
         reload:    'reload <url> [--edit]            alias for `call <url> reload`',
         clear:     'clear [--yes]                    wipe the state file and nonce pools',
         help:      'help [<command>]                 this help',

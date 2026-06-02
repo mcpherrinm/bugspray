@@ -354,6 +354,12 @@ h1 {
     width: 100%;
 }
 
+.genStatus {
+    margin-top: 0.5rem;
+    color: #666;
+    font-size: 0.9rem;
+}
+
 .nonceList {
     list-style: none;
     padding: 0;

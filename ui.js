@@ -6,6 +6,7 @@ import {
     AcmeDirectory, AcmeOrder, AcmeChallenge, AcmeCertificate,
     buildSigned, submitSigned,
 } from "./acme.js";
+import {generateKeyAndCsr} from "./csr.js";
 
 const env = buildBrowserEnv();
 
@@ -640,11 +641,59 @@ function runFinalizeOrder(url, object) {
         kid,
         directoryUrl: findDirectoryUrl(url),
         buildForm: (f) => {
+            /** @type {Array<{type: string, value: string}>} */
+            const identifiers = (object.resource && object.resource.identifiers) || [];
+
             const csrInput = document.createElement('textarea');
             csrInput.id = 'csr-input';
             csrInput.placeholder = '-----BEGIN CERTIFICATE REQUEST-----\n...\n-----END CERTIFICATE REQUEST-----';
             csrInput.className = 'rawObject';
-            f.appendChild(div(label('csr-input', 'CSR (PEM or Base64url-encoded DER):'), csrInput));
+
+            // "Generate key and CSR" — for users who don't already have a CSR.
+            // It builds an EC P-256 key + CSR covering the order's identifiers,
+            // drops the CSR into the field above, and surfaces the private key
+            // so the user can save it (it is not persisted anywhere).
+            const genBtn = element('button', 'Generate key and CSR');
+            genBtn.type = 'button';
+            const genStatus = element('p', identifiers.length
+                ? `Will cover: ${identifiers.map(i => `${i.type}:${i.value}`).join(', ')}`
+                : 'This order has no identifiers to put in a CSR.');
+            genStatus.className = 'genStatus';
+            if (identifiers.length === 0) genBtn.disabled = true;
+
+            const keyOut = document.createElement('textarea');
+            keyOut.className = 'rawObject';
+            keyOut.readOnly = true;
+            const keyOutWrap = div(
+                element('h3', '⚠️ Generated private key — save it now, it is not stored'),
+                keyOut,
+            );
+            keyOutWrap.hidden = true;
+
+            genBtn.onclick = async () => {
+                genBtn.disabled = true;
+                genStatus.innerText = 'Generating key and CSR…';
+                try {
+                    const {pem, privateKeyPem} = await generateKeyAndCsr(env.subtle, identifiers);
+                    csrInput.value = pem;
+                    // Let the requester rebuild the live payload/signed preview.
+                    csrInput.dispatchEvent(new Event('input', {bubbles: true}));
+                    keyOut.value = privateKeyPem;
+                    keyOutWrap.hidden = false;
+                    genStatus.innerText = 'Generated an EC P-256 key and CSR. Save the private key below.';
+                } catch (e) {
+                    genStatus.innerText = `Error generating CSR: ${e}`;
+                } finally {
+                    genBtn.disabled = identifiers.length === 0;
+                }
+            };
+
+            f.appendChild(div(
+                label('csr-input', 'CSR (PEM or Base64url-encoded DER):'),
+                csrInput,
+                div(genBtn, genStatus),
+                keyOutWrap,
+            ));
             return () => ({csr: AcmeOrder.normalizeCsr(csrInput.value)});
         },
         postProcess: (resource, targetUrl) => {
