@@ -511,13 +511,13 @@ function newAccountForm(f, directory) {
     });
 
     let tosLink = element('a', 'Terms of Service');
-    tosLink.href = directory.resource['meta']['termsOfService'];
+    tosLink.href = directory.resource?.meta?.termsOfService;
     const tosAgreed = checkbox(f, 'tosAgreed', 'Agree to Terms of Service', tosLink);
 
     const onlyReturnExisting = checkbox(f, 'onlyReturnExisting', 'Only return existing', 'Don\'t create a new account: Look up by account key');
 
     // Warn that EAB isn't implemented if required
-    if (directory.resource['meta']['externalAccountRequired']) {
+    if (directory.resource?.meta?.externalAccountRequired) {
         f.appendChild(element('p', "⚠️ External Account Binding is required, but not implemented."));
     }
 
